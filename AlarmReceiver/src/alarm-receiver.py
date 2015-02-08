@@ -5,12 +5,20 @@ import SocketServer
 import socket
 from datetime import datetime
 import time
-
+import base64
+from Crypto.Cipher import Blowfish
+import httplib
 import logging
 import threading
 import re
 import smtplib
 from email.mime.text import MIMEText
+
+# Config section
+config={}
+config['pi_server_url']       = "localhost:8444";
+config['encrypt_iv']          = "12345678";
+config['encrypt_passphrase']  = "1234567890abcdef";
 
 LOG_PATH="/var/log/alarmReceiver.log"
 logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
@@ -103,7 +111,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         try:
             pos = line.index(ID_STRING)
             inputMessage=line[pos:]
-            if line[0:4] != AlarmTCPHandler.CRCCalc(inputMessage):
+            if line[0:4] != CRCCalc(inputMessage):
                 #raise Exception("CRC errato!")
                 # Anche se da specifiche dovremmo ignorare il messaggio mandiamo un NAK così l'allarme ripete!
                 timestamp = datetime.fromtimestamp(time.time()).strftime('_%H:%M:%S,%m-%d-%Y')
@@ -116,7 +124,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
             # L'allarme non controlla nemmeno il checksum e basterebbe mandargli questo:
             # CRC="@?00";
             # ... ma noi facciamo le cose per bene
-            CRC = AlarmTCPHandler.CRCCalc(response)
+            CRC = CRCCalc(response)
             response="\n" + CRC + header + response + "\r"
             logging.info("Rispondo: " + response)
             self.request.sendall(response)
@@ -138,8 +146,10 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
             
             if tipo == "CL" or tipo == "NL":
                 alarmActive = True
+                callPiServer("allOff/group:1")
             elif tipo == "OP":
                 alarmActive = False
+                callPiServer("allOn/group:1")
                 
             errorCode = errorCodes[tipo]
             if errorCode:
@@ -202,19 +212,33 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         threadLock.release()
         logging.debug("Lock released!")
 
-    @staticmethod
-    def CRCCalc(msg):
-        CRC=0
-        for letter in msg:
-            temp=ord(letter)
-            for j in range(0,8):
-                temp ^= CRC & 1
-                CRC >>= 1
-                if (temp & 1) != 0:
-                    CRC ^= 0xA001
-                temp >>= 1
-                
-        return ('%x' % CRC).upper().zfill(4)
+def CRCCalc(msg):
+    CRC=0
+    for letter in msg:
+        temp=ord(letter)
+        for j in range(0,8):
+            temp ^= CRC & 1
+            CRC >>= 1
+            if (temp & 1) != 0:
+                CRC ^= 0xA001
+            temp >>= 1
+            
+    return ('%x' % CRC).upper().zfill(4)
+
+def callPiServer(requestString):
+    requestString = requestString + "?client=raspberry&time=" + str(int(time.time()));
+    conn = httplib.HTTPConnection(config['pi_server_url'])
+    conn.request("GET", "/" + encrypt(requestString))
+    r1 = conn.getresponse()
+    print(r1.status, r1.reason)
+    
+def encrypt(message):
+    cipher = Blowfish.new(config['encrypt_passphrase'], Blowfish.MODE_CBC, config['encrypt_iv'])
+    pad = 8-(len(message)%8)
+    for x in range(pad):
+        message+=" "
+    encrypted = cipher.encrypt(message)
+    return base64.urlsafe_b64encode(encrypted)
 
 if __name__ == "__main__":
     HOST, PORT = "", 9505
