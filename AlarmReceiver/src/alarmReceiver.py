@@ -1,12 +1,13 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*- 
 
+from alarmManager import AlarmManager
 import SocketServer
 import socket
 from datetime import datetime
 import time
-import httplib
 import logging
+import threading
 
 # Config section
 config={}
@@ -31,14 +32,7 @@ logging.getLogger().setLevel(logging.DEBUG)
 
 ID_STRING='"SIA-DCS"'
 
-DISABLE_SMS=True
-
-ALWAYS="always"
-IF_ACTIVE="active"
-EMAIL_FALLBACK="fallback"
-NEVER="never"
-
-alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^(.+)\^")
+alarmManager = AlarmManager()
 
 class AlarmTCPHandler(SocketServer.BaseRequestHandler):
     """
@@ -48,8 +42,6 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
     override the handle() method to implement communication to the
     client.
     """
-    def __init__(self):
-        self.alarmManager = AlarmManager()
 
     def handle(self):
         # self.request is the TCP socket connected to the client
@@ -59,7 +51,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         try:
             pos = line.index(ID_STRING)
             inputMessage=line[pos:]
-            if line[0:4] != CRCCalc(inputMessage):
+            if line[0:4] != AlarmTCPHandler.CRCCalc(inputMessage):
                 #raise Exception("CRC errato!")
                 # Anche se da specifiche dovremmo ignorare il messaggio mandiamo un NAK così l'allarme ripete!
                 timestamp = datetime.fromtimestamp(time.time()).strftime('_%H:%M:%S,%m-%d-%Y')
@@ -72,12 +64,12 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
             # L'allarme non controlla nemmeno il checksum e basterebbe mandargli questo:
             # CRC="@?00";
             # ... ma noi facciamo le cose per bene
-            CRC = CRCCalc(response)
+            CRC = AlarmTCPHandler.CRCCalc(response)
             response="\n" + CRC + header + response + "\r"
             logging.info("Rispondo: " + response)
             self.request.sendall(response)
 
-            t = threading.Thread(target=self.alarmManager.manageAlarmMessage, args=[inputMessage])
+            t = threading.Thread(target=alarmManager.manageAlarmMessage, args=[inputMessage])
             t.start()
 
         except Exception as inst:
@@ -98,9 +90,13 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         return ('%x' % CRC).upper().zfill(4)
 
 if __name__ == "__main__":
+    # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
     HOST, PORT = "", 9505
     #HOST, PORT = "localhost", 9505
 
+    #s = '"SIA-DCS"0091L0#001234[#001234|Nri0LB0]_06:43:58,02-15-2015'
+    #alarmManager.manageAlarmMessage(s)
+    
     logging.info((HOST, PORT))
     # Create the server, binding to localhost on port 9999
     SocketServer.TCPServer.allow_reuse_address = True

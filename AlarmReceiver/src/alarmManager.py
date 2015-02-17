@@ -4,97 +4,123 @@
 import logging
 import threading
 import re
+import time
 import smtplib
+import httplib
 from email.mime.text import MIMEText
+from ADB import ADB
+
+DISABLE_SMS=True
+adb=ADB("/opt/android-sdk-linux_x86/platform-tools/adb")
+
+
+# CL-OP -> Inserimento totale
+# NL-OP -> Inserimento parziale
+# BC -> Reset memoria
+# JP -> Riconoscimento codice/chiave
+# XT-XR -> Resistenza interna batteria
+# YM-YR -> Corto circuito/disconnessione batteria
+# YT-YR -> Batteria inefficiente
+# AT-AR -> Mancanza alimentazione
+# EM-EN -> Scomparsa dispositivo
+# DD-DR -> Codice/chiave errati
+# LB-LX -> Ingresso programmazione
+# OU-OV -> Malfunzionamento uscita
 
 class AlarmManager:
-    # CL-OP -> Inserimento totale
-    # NL-OP -> Inserimento parziale
-    # BC -> Reset memoria
-    # JP -> Riconoscimento codice/chiave
-    # XT-XR -> Resistenza interna batteria
-    # YM-YR -> Corto circuito/disconnessione batteria
-    # YT-YR -> Batteria inefficiente
-    # AT-AR -> Mancanza alimentazione
-    # EM-EN -> Scomparsa dispositivo
-    # DD-DR -> Codice/chiave errati
-    # LB-LX -> Ingresso programmazione
-    # OU-OV -> Malfunzionamento uscita
-    errorCodes = {
-          # Non definito
-          "UX" : {"desc": "Non definito", "sendSms": NEVER},
-          
-          # Set
-          "BA" : {"desc": "ALLARME INTRUSIONE", "sendSms": ALWAYS},
-          "TA" : {"desc": "SABOTAGGIO", "sendSms": IF_ACTIVE},
-          "BB" : {"desc": "Esclusione", "sendSms": NEVER},
-          "CL" : {"desc": "Inserimento totale", "sendSms": NEVER},
-          "NL" : {"desc": "Inserimento parziale", "sendSms": NEVER},
-          "BC" : {"desc": "Reset memoria", "sendSms": NEVER},
-          "JP" : {"desc": "Riconoscimento codice/chiave", "sendSms": NEVER},
-          "XT" : {"desc": "Resistenza interna batteria", "sendSms": IF_ACTIVE},
-          "YM" : {"desc": "Corto circuito/disconnessione batteria", "sendSms": IF_ACTIVE},
-          "YT" : {"desc": "Batteria inefficiente", "sendSms": IF_ACTIVE},
-          "AT" : {"desc": "Mancanza alimentazione", "sendSms": IF_ACTIVE},
-          "EM" : {"desc": "Scomparsa dispositivo", "sendSms": IF_ACTIVE},
-          "DD" : {"desc": "Codice/chiave errati", "sendSms": ALWAYS},
-          "LB" : {"desc": "Ingresso programmazione", "sendSms": IF_ACTIVE},
-          "OU" : {"desc": "Malfunzionamento uscita", "sendSms": EMAIL_FALLBACK},
-          
-          # Reset
-          "BR" : {"desc": "Ripristino allarme intrusione", "sendSms": ALWAYS},
-          "TR" : {"desc": "Ripristino sabotaggio", "sendSms": ALWAYS},
-          "BU" : {"desc": "Ripristino esclusione", "sendSms": NEVER},
-          "OP" : {"desc": "Disinserimento", "sendSms": NEVER},
-          "XR" : {"desc": "Ripristino resistenza interna batteria", "sendSms": IF_ACTIVE},
-          "YR" : {"desc": "Ripristino batteria", "sendSms": IF_ACTIVE},
-          "AR" : {"desc": "Ripristino alimentazione", "sendSms": IF_ACTIVE},
-          "EN" : {"desc": "Ripristino scomparsa dispositivo", "sendSms": IF_ACTIVE},
-          "DR" : {"desc": "Ripristino codice/chiave errati", "sendSms": ALWAYS},
-          "LX" : {"desc": "Uscita programmazione", "sendSms": IF_ACTIVE},
-          "OV" : {"desc": "Ripristino malfunzionamento uscita", "sendSms": EMAIL_FALLBACK}
-    }
-
+    alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^?(.*)\^?\]")
+        
     def __init__(self):
         self.alarmActive = False
         self.threadLock = threading.Lock()
+        self.reactions = {            
+            # Non definito
+            "UX" : {"subject": "Non definito", "execute": None},
+            
+            # Set
+            "BA" : {"subject": "ALLARME INTRUSIONE", "execute": self.inviaSmsEdEmail},
+            "TA" : {"subject": "SABOTAGGIO", "execute": self.inviaSmsSeInseritoEdEmail},
+            "BB" : {"subject": "Esclusione", "execute": self.sendEmail},
+            "CL" : {"subject": "Inserimento totale", "execute": self.inserimentoAllarme},
+            "NL" : {"subject": "Inserimento parziale", "execute": self.inserimentoAllarme},
+            "BC" : {"subject": "Reset memoria", "execute": self.sendEmail},
+            "JP" : {"subject": "Riconoscimento codice/chiave", "execute": self.sendEmail},
+            "XT" : {"subject": "Resistenza interna batteria", "execute": self.sendEmail},
+            "YM" : {"subject": "Corto circuito/disconnessione batteria", "execute": self.sendEmail},
+            "YT" : {"subject": "Batteria inefficiente", "execute": self.sendEmail},
+            "AT" : {"subject": "Mancanza alimentazione", "execute": self.sendEmail},
+            "EM" : {"subject": "Scomparsa dispositivo", "execute": self.sendEmail},
+            "DD" : {"subject": "Codice/chiave errati", "execute": self.sendEmail},
+            "LB" : {"subject": "Ingresso programmazione", "execute": self.sendEmail},
+            "OU" : {"subject": "Malfunzionamento uscita", "execute": self.inviaSmsSeEmailNonFunziona},
+            
+            # Reset
+            "BR" : {"subject": "Ripristino allarme intrusione", "execute": self.sendEmail},
+            "TR" : {"subject": "Ripristino sabotaggio", "execute": self.sendEmail},
+            "BU" : {"subject": "Ripristino esclusione", "execute": self.sendEmail},
+            "OP" : {"subject": "Disinserimento", "execute": self.disinserimentoAllarme},
+            "XR" : {"subject": "Ripristino resistenza interna batteria", "execute": self.sendEmail},
+            "YR" : {"subject": "Ripristino batteria", "execute": self.sendEmail},
+            "AR" : {"subject": "Ripristino alimentazione", "execute": self.sendEmail},
+            "EN" : {"subject": "Ripristino scomparsa dispositivo", "execute": self.sendEmail},
+            "DR" : {"subject": "Ripristino codice/chiave errati", "execute": self.sendEmail},
+            "LX" : {"subject": "Uscita programmazione", "execute": self.sendEmail},
+            "OV" : {"subject": "Ripristino malfunzionamento uscita", "execute": self.inviaSmsSeEmailNonFunziona}
+        }
         
-    def manageAlarmMessage(msg):
-        m = alarmPattern.search(msg)
+    def manageAlarmMessage(self, msg):
+        m = AlarmManager.alarmPattern.search(msg)
         if m:
             tipo = m.group(1)
             desc = m.group(2).strip()
             logging.info("Tipo evento: " + tipo + ", testo: " + desc)
             
-            if tipo == "CL" or tipo == "NL":
-                self.alarmActive = True
-                for groupId in config['groupsToSwitchOffWhenActive']:
-                    callPiServer("allOff/group:" + groupId)
-            elif tipo == "OP":
-                self.alarmActive = False
-                for groupId in config['groupsToSwitchOnWhenDeactive']:
-                    callPiServer("allOn/group:" + groupId)
-                
-            errorCode = errorCodes[tipo]
-            if errorCode:
-                msgString = errorCode["desc"] + ": " + desc
+            if tipo in self.reactions:
+                reaction = self.reactions[tipo]
+                subject = reaction["subject"]
+                message = subject + ": " + desc
+                executeMethod = reaction["execute"]
+                if executeMethod:
+                    executeMethod(subject, message)
             else:
-                msgString = "Evento sconosciuto: " + errorCode[0] + ": " + desc
+                logging.warn("Evento sconosciuto: " + tipo + ": " + desc)
             
-            smsPolicy = errorCode["sendSms"]
+            return
+    
+    def inserimentoAllarme(self, subject, message):
+        self.alarmActive = True
+        AlarmManager.callPiServer("allOff/group:1")
+        
+        self.sendEmail(subject, message)
+        AlarmManager.callTaskerTask("Abilita_Cell")
+    
+    def disinserimentoAllarme(self, subject, message):
+        self.alarmActive = False
+        AlarmManager.callPiServer("allOn/group:1")
             
-            if smsPolicy == ALWAYS or smsPolicy == IF_ACTIVE and self.alarmActive:
-                AlarmTCPHandler.sendSms(msgString)
-                
-            mailSent = AlarmTCPHandler.sendEmail(errorCode["desc"], msgString)
-            if not mailSent and smsPolicy == EMAIL_FALLBACK:
-                AlarmTCPHandler.sendSms(msgString)
-                
-    @staticmethod
-    def sendEmail(subject, msg):
+        self.sendEmail(subject, message)
+        AlarmManager.callTaskerTask("Disabilita_Cell")
+    
+    def inviaSmsEdEmail(self, subject, message):
+        self.sendSms(message)
+        self.sendEmail(subject, message)
+        
+    def inviaSmsSeInseritoEdEmail(self, subject, message):
+        if self.alarmActive:
+            self.sendSms(message)
+            
+        self.sendEmail(subject, message)        
+    
+    def inviaSmsSeEmailNonFunziona(self, subject, message):
+        if self.alarmActive:
+            self.sendSms(message)
+            
+        self.sendEmail(subject, message)
+        
+    def sendEmail(self, subject, msg):
         # Get lock to synchronize threads
         logging.debug("Acquiring lock...")
-        threadLock.acquire()
+        self.threadLock.acquire()
         
         logging.info("Invio email: " + msg)
         try:
@@ -118,11 +144,10 @@ class AlarmManager:
             return False
         finally:        
             # Free lock to release next thread
-            threadLock.release()
+            self.threadLock.release()
             logging.debug("Lock released!")
         
-    @staticmethod
-    def sendSms(msg):
+    def sendSms(self, msg):
         logging.info("Invio sms: " + msg)
         if DISABLE_SMS:
             logging.info("sms disabled")
@@ -130,11 +155,29 @@ class AlarmManager:
         
         # Get lock to synchronize threads
         logging.debug("Acquiring lock...")
-        threadLock.acquire()
+        self.threadLock.acquire()
         
         # Free lock to release next thread
-        threadLock.release()
+        self.threadLock.release()
         logging.debug("Lock released!")
+    
+    @staticmethod
+    def callTaskerTask(taskName, par1=None, par2=None, par3=None):
+        command = "am broadcast -a pl.bossman.taskerproxy.ACTION_TASK --es task_name " + taskName
+        
+        if par1:
+            command += " --es p1 " + par1
+        if par2:
+            command += " --es p2 " + par2
+        if par3:
+            command += " --es p3 " + par3
+             
+        sendAdbCommand(command)
+        
+    @staticmethod
+    def sendAdbCommand(command):
+        adb.start_server()
+        adb.shell_command(command)
     
     @staticmethod
     def callPiServer(requestString):
@@ -152,3 +195,8 @@ class AlarmManager:
             message+=" "
         encrypted = cipher.encrypt(message)
         return base64.urlsafe_b64encode(encrypted)
+
+if __name__ == "__main__":
+    alarmManager = AlarmManager()
+    s = '"SIA-DCS"0091L0#001234[#001234|Nri0CL0]_06:43:58,02-15-2015'
+    alarmManager.manageAlarmMessage(s)
