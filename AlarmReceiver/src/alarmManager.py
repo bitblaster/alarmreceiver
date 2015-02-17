@@ -11,8 +11,12 @@ from email.mime.text import MIMEText
 from ADB import ADB
 
 DISABLE_SMS=True
-adb=ADB("/opt/android-sdk-linux_x86/platform-tools/adb")
 
+# Config section
+config={}
+config['pi_server_url']       = "localhost:8444"
+config['encrypt_iv']          = "12345678"
+config['encrypt_passphrase']  = "1234567890abcdef"
 
 # CL-OP -> Inserimento totale
 # NL-OP -> Inserimento parziale
@@ -30,7 +34,8 @@ adb=ADB("/opt/android-sdk-linux_x86/platform-tools/adb")
 class AlarmManager:
     alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^?(.*)\^?\]")
         
-    def __init__(self):
+    def __init__(self, adbPath):
+        adb=ADB(adbPath)
         self.alarmActive = False
         self.threadLock = threading.Lock()
         self.reactions = {            
@@ -197,6 +202,6 @@ class AlarmManager:
         return base64.urlsafe_b64encode(encrypted)
 
 if __name__ == "__main__":
-    alarmManager = AlarmManager()
+    alarmManager = AlarmManager("/opt/adb")
     s = '"SIA-DCS"0091L0#001234[#001234|Nri0CL0]_06:43:58,02-15-2015'
     alarmManager.manageAlarmMessage(s)

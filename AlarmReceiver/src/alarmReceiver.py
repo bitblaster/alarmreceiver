@@ -8,15 +8,13 @@ from datetime import datetime
 import time
 import logging
 import threading
+import sys
 
-# Config section
-config={}
-config['pi_server_url']       = "localhost:8444"
-config['encrypt_iv']          = "12345678"
-config['encrypt_passphrase']  = "1234567890abcdef"
-config['groupsToSwitchOffWhenActive'] = ['1']
-config['groupsToSwitchOnWhenDeactive'] = ['1']
-
+if len(sys.argv) > 1 and sys.argv[1] == "1":
+    adbPath = "/opt/android-sdk-linux_x86/platform-tools/adb"
+else:
+    adbPath = "/opt/adb"
+    
 LOG_PATH="/var/log/alarmReceiver.log"
 logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
 
@@ -32,7 +30,7 @@ logging.getLogger().setLevel(logging.DEBUG)
 
 ID_STRING='"SIA-DCS"'
 
-alarmManager = AlarmManager()
+alarmManager = AlarmManager(adbPath)
 
 class AlarmTCPHandler(SocketServer.BaseRequestHandler):
     """
