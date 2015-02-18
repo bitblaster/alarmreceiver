@@ -7,6 +7,8 @@ import re
 import time
 import smtplib
 import httplib
+import base64
+from Crypto.Cipher import Blowfish
 from email.mime.text import MIMEText
 from ADB import ADB
 
@@ -14,7 +16,7 @@ DISABLE_SMS=True
 
 # Config section
 config={}
-config['pi_server_url']       = "localhost:8444"
+config['pi_server_url']       = "192.168.0.150:8444"
 config['encrypt_iv']          = "12345678"
 config['encrypt_passphrase']  = "1234567890abcdef"
 
@@ -32,10 +34,10 @@ config['encrypt_passphrase']  = "1234567890abcdef"
 # OU-OV -> Malfunzionamento uscita
 
 class AlarmManager:
-    alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^?(.*)\^?\]")
+    alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^?([^\^]*)\^?\]")
         
     def __init__(self, adbPath):
-        adb=ADB(adbPath)
+        self.adb=ADB(adbPath)
         self.alarmActive = False
         self.threadLock = threading.Lock()
         self.reactions = {            
@@ -77,7 +79,7 @@ class AlarmManager:
         m = AlarmManager.alarmPattern.search(msg)
         if m:
             tipo = m.group(1)
-            desc = m.group(2).strip()
+            desc = re.sub('\s\s+',' ', m.group(2)).strip()
             logging.info("Tipo evento: " + tipo + ", testo: " + desc)
             
             if tipo in self.reactions:
@@ -97,14 +99,14 @@ class AlarmManager:
         AlarmManager.callPiServer("allOff/group:1")
         
         self.sendEmail(subject, message)
-        AlarmManager.callTaskerTask("Abilita_Cell")
+        self.callTaskerTask("Abilita_Cell")
     
     def disinserimentoAllarme(self, subject, message):
         self.alarmActive = False
         AlarmManager.callPiServer("allOn/group:1")
             
         self.sendEmail(subject, message)
-        AlarmManager.callTaskerTask("Disabilita_Cell")
+        self.callTaskerTask("Disabilita_Cell")
     
     def inviaSmsEdEmail(self, subject, message):
         self.sendSms(message)
@@ -166,8 +168,7 @@ class AlarmManager:
         self.threadLock.release()
         logging.debug("Lock released!")
     
-    @staticmethod
-    def callTaskerTask(taskName, par1=None, par2=None, par3=None):
+    def callTaskerTask(self, taskName, par1=None, par2=None, par3=None):
         command = "am broadcast -a pl.bossman.taskerproxy.ACTION_TASK --es task_name " + taskName
         
         if par1:
@@ -177,20 +178,20 @@ class AlarmManager:
         if par3:
             command += " --es p3 " + par3
              
-        sendAdbCommand(command)
+        self.sendAdbCommand(command)
         
-    @staticmethod
-    def sendAdbCommand(command):
-        adb.start_server()
-        adb.shell_command(command)
+    def sendAdbCommand(self, command):
+        self.adb.start_server()
+        self.adb.shell_command(command)
     
     @staticmethod
     def callPiServer(requestString):
         requestString = requestString + "?client=raspberry&time=" + str(int(time.time()));
+        logging.debug("Chiamata al server PiHome con request: " + requestString)
         conn = httplib.HTTPConnection(config['pi_server_url'])
-        conn.request("GET", "/" + encrypt(requestString))
+        conn.request("GET", "/" + AlarmManager.encrypt(requestString))
         r1 = conn.getresponse()
-        print(r1.status, r1.reason)
+        logging.debug("Risposta del server PiHome: %s - %s" % (r1.status, r1.reason))
         
     @staticmethod
     def encrypt(message):
