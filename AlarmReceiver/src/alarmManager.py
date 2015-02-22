@@ -12,7 +12,11 @@ from Crypto.Cipher import Blowfish
 from email.mime.text import MIMEText
 from ADB import ADB
 
-DISABLE_SMS=True
+DISABLE_SMS=False
+
+DISINSERIMENTO = 0
+INSERIMENTO_TOTALE = 1
+INSERIMENTO_PARZIALE = 2
 
 # Config section
 config={}
@@ -34,7 +38,7 @@ config['encrypt_passphrase']  = "1234567890abcdef"
 # OU-OV -> Malfunzionamento uscita
 
 class AlarmManager:
-    alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)[0-9]+\^?([^\^]*)\^?\]")
+    alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)([0-9]+)\^?([^\^]*)\^?\]")
         
     def __init__(self, adbPath):
         self.adb=ADB(adbPath)
@@ -48,8 +52,8 @@ class AlarmManager:
             "BA" : {"subject": "ALLARME INTRUSIONE", "execute": self.inviaSmsEdEmail},
             "TA" : {"subject": "SABOTAGGIO", "execute": self.inviaSmsSeInseritoEdEmail},
             "BB" : {"subject": "Esclusione", "execute": self.sendEmail},
-            "CL" : {"subject": "Inserimento totale", "execute": self.inserimentoAllarme},
-            "NL" : {"subject": "Inserimento parziale", "execute": self.inserimentoAllarme},
+            "CL" : {"subject": "Inserimento totale", "execute": self.inserimentoTotale},
+            "NL" : {"subject": "Inserimento parziale", "execute": self.inserimentoParziale},
             "BC" : {"subject": "Reset memoria", "execute": self.sendEmail},
             "JP" : {"subject": "Riconoscimento codice/chiave", "execute": self.sendEmail},
             "XT" : {"subject": "Resistenza interna batteria", "execute": self.sendEmail},
@@ -65,7 +69,7 @@ class AlarmManager:
             "BR" : {"subject": "Ripristino allarme intrusione", "execute": self.sendEmail},
             "TR" : {"subject": "Ripristino sabotaggio", "execute": self.sendEmail},
             "BU" : {"subject": "Ripristino esclusione", "execute": self.sendEmail},
-            "OP" : {"subject": "Disinserimento", "execute": self.disinserimentoAllarme},
+            "OP" : {"subject": "Disinserimento", "execute": self.disinserimento},
             "XR" : {"subject": "Ripristino resistenza interna batteria", "execute": self.sendEmail},
             "YR" : {"subject": "Ripristino batteria", "execute": self.sendEmail},
             "AR" : {"subject": "Ripristino alimentazione", "execute": self.sendEmail},
@@ -79,8 +83,9 @@ class AlarmManager:
         m = AlarmManager.alarmPattern.search(msg)
         if m:
             tipo = m.group(1)
-            desc = re.sub('\s\s+',' ', m.group(2)).strip()
-            logging.info("Tipo evento: " + tipo + ", testo: " + desc)
+            param = m.group(2)
+            desc = re.sub('\s\s+',' ', m.group(3)).strip()
+            logging.info("Tipo evento: " + tipo + ", param: " + param + ", testo: " + desc)
             
             if tipo in self.reactions:
                 reaction = self.reactions[tipo]
@@ -88,43 +93,66 @@ class AlarmManager:
                 message = subject + ": " + desc
                 executeMethod = reaction["execute"]
                 if executeMethod:
-                    executeMethod(subject, message)
+                    executeMethod(subject, message, param)
             else:
                 logging.warn("Evento sconosciuto: " + tipo + ": " + desc)
             
             return
     
-    def inserimentoAllarme(self, subject, message):
-        self.alarmActive = True
+    def inserimentoTotale(self, subject, message, param):
+        self.alarmActive = INSERIMENTO_TOTALE
         AlarmManager.callPiServer("allOff/group:1")
         
         self.sendEmail(subject, message)
         self.callTaskerTask("Abilita_Cell")
+
+        if param is not None and len(param) > 0:
+            iParam = int(param)
+            if iParam == 1:
+                #self.callTaskerTask("Pronuncia", "Ciao Roby, a presto!")
+                self.callTaskerTask("Pronuncia", "Uno")
+            elif iParam == 2:
+                self.callTaskerTask("Pronuncia", "Ciao Kate, a presto!")
+        
+    def inserimentoParziale(self, subject, message, param):
+        self.alarmActive = INSERIMENTO_PARZIALE
+        
+        self.sendEmail(subject, message)
     
-    def disinserimentoAllarme(self, subject, message):
-        self.alarmActive = False
-        AlarmManager.callPiServer("allOn/group:1")
+    def disinserimento(self, subject, message, param):
+        if self.alarmActive==INSERIMENTO_TOTALE: 
+            AlarmManager.callPiServer("switchDeviceFuzzy/enable Lampada Soggiorno")
+            
+        self.alarmActive = DISINSERIMENTO
             
         self.sendEmail(subject, message)
         self.callTaskerTask("Disabilita_Cell")
+        
+        if param is not None and len(param) > 0:
+            iParam = int(param)
+            if iParam == 1:
+                #self.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")
+                self.callTaskerTask("Pronuncia", "Una")
+            elif iParam == 2:
+                self.callTaskerTask("Pronuncia", "Ciao Kate, bentornata a casa!")
     
-    def inviaSmsEdEmail(self, subject, message):
+    def inviaSmsEdEmail(self, subject, message, param):
         self.sendSms(message)
         self.sendEmail(subject, message)
         
-    def inviaSmsSeInseritoEdEmail(self, subject, message):
+    def inviaSmsSeInseritoEdEmail(self, subject, message, param):
         if self.alarmActive:
             self.sendSms(message)
             
         self.sendEmail(subject, message)        
     
-    def inviaSmsSeEmailNonFunziona(self, subject, message):
+    def inviaSmsSeEmailNonFunziona(self, subject, message, param):
         if self.alarmActive:
             self.sendSms(message)
             
         self.sendEmail(subject, message)
         
-    def sendEmail(self, subject, msg):
+    def sendEmail(self, subject, msg, param=None):
         # Get lock to synchronize threads
         logging.debug("Acquiring lock...")
         self.threadLock.acquire()
@@ -160,13 +188,7 @@ class AlarmManager:
             logging.info("sms disabled")
             return
         
-        # Get lock to synchronize threads
-        logging.debug("Acquiring lock...")
-        self.threadLock.acquire()
-        
-        # Free lock to release next thread
-        self.threadLock.release()
-        logging.debug("Lock released!")
+        self.callTaskerTask("Invia_SMS", msg)
     
     def callTaskerTask(self, taskName, par1=None, par2=None, par3=None):
         command = "am broadcast -a pl.bossman.taskerproxy.ACTION_TASK --es task_name " + taskName
@@ -181,8 +203,16 @@ class AlarmManager:
         self.sendAdbCommand(command)
         
     def sendAdbCommand(self, command):
+        # Get lock to synchronize threads
+        logging.debug("Acquiring lock...")
+        self.threadLock.acquire()
+        
         self.adb.start_server()
         self.adb.shell_command(command)
+        
+        # Free lock to release next thread
+        self.threadLock.release()
+        logging.debug("Lock released!")
     
     @staticmethod
     def callPiServer(requestString):
