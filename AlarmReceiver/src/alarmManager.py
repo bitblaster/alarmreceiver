@@ -160,7 +160,7 @@ class AlarmManager:
         try:
             msg = MIMEText(msg)
 
-            mailFrom = "Allarme Casa <videomozzi@gmail.com>"
+            mailFrom = "Antifurto Casa <videomozzi@gmail.com>"
             mailTo = "Roberto Mozzicato <bitblasters@gmail.com>"
             msg['Subject'] = subject
             msg['From'] = mailFrom
