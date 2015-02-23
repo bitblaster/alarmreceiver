@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*- 
 
+from config import Config
 import logging
 import threading
 import re
@@ -17,12 +18,6 @@ DISABLE_SMS=False
 DISINSERIMENTO = 0
 INSERIMENTO_TOTALE = 1
 INSERIMENTO_PARZIALE = 2
-
-# Config section
-config={}
-config['pi_server_url']       = "192.168.0.150:8444"
-config['encrypt_iv']          = "12345678"
-config['encrypt_passphrase']  = "1234567890abcdef"
 
 # CL-OP -> Inserimento totale
 # NL-OP -> Inserimento parziale
@@ -217,16 +212,16 @@ class AlarmManager:
     def callPiServer(requestString):
         requestString = requestString + "?client=raspberry&time=" + str(int(time.time()));
         logging.debug("Chiamata al server PiHome con request: " + requestString)
-        conn = httplib.HTTPConnection(config['pi_server_url'])
+        conn = httplib.HTTPConnection(Config.get('pi_server_url'))
         conn.request("GET", "/" + AlarmManager.encrypt(requestString))
         r1 = conn.getresponse()
         logging.debug("Risposta del server PiHome: %s - %s" % (r1.status, r1.reason))
         
     @staticmethod
     def encrypt(message):
-        cipher = Blowfish.new(config['encrypt_passphrase'], Blowfish.MODE_CBC, config['encrypt_iv'])
+        cipher = Blowfish.new(Config.get('encrypt_passphrase'), Blowfish.MODE_CBC, Config.get('encrypt_iv'))
         pad = 8-(len(message)%8)
-        for x in range(pad):
+        for x in range(pad):  # @UnusedVariable
             message+=" "
         encrypted = cipher.encrypt(message)
         return base64.urlsafe_b64encode(encrypted)

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*- 
 
 from alarmManager import AlarmManager
+from config import Config
 import SocketServer
 from datetime import datetime
 import time
@@ -77,7 +78,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         CRC=0
         for letter in msg:
             temp=ord(letter)
-            for j in range(0,8):
+            for j in range(0,8):  # @UnusedVariable
                 temp ^= CRC & 1
                 CRC >>= 1
                 if (temp & 1) != 0:
@@ -88,7 +89,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
 
 if __name__ == "__main__":
     # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
-    HOST, PORT = "", 9505
+    HOST, PORT = "", Config.getInt("server_port")
     #HOST, PORT = "localhost", 9505
 
     #s = '"SIA-DCS"0091L0#001234[#001234|Nri0LB0]_06:43:58,02-15-2015'
