@@ -102,14 +102,14 @@ class AlarmManager:
     def inserimentoTotale(self, subject, message, param):
         self.alarmActive = INSERIMENTO_TOTALE
 
-        AlarmManager.callPiServer("allOff/group:1")
-
         if param is not None and len(param) > 0:
             iParam = int(param)
             if iParam == 1:
                 self.callTaskerTask("Pronuncia", "Ciao Roby, a presto!")
             elif iParam == 2:
-                self.callTaskerTask("Pronuncia", "Ciao Kate, a presto!")
+                self.callTaskerTask("Pronuncia", "Ciao Cate, a presto!")
+
+        AlarmManager.callPiServer("allOff/group:1")
                 
         self.sendEmail(subject, message)
         self.callTaskerTask("Abilita_Cell")
@@ -120,17 +120,17 @@ class AlarmManager:
         self.sendEmail(subject, message)
     
     def disinserimento(self, subject, message, param):
-        if self.alarmActive==INSERIMENTO_TOTALE: 
-            AlarmManager.callPiServer("switchDeviceFuzzy/enable Lampada Soggiorno")
-            
-        self.alarmActive = DISINSERIMENTO
-            
         if param is not None and len(param) > 0:
             iParam = int(param)
             if iParam == 1:
                 self.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")
             elif iParam == 2:
-                self.callTaskerTask("Pronuncia", "Ciao Kate, bentornata a casa!")
+                self.callTaskerTask("Pronuncia", "Ciao Cate, bentornata a casa!")
+
+        if self.alarmActive==INSERIMENTO_TOTALE: 
+            AlarmManager.callPiServer("switchDeviceFuzzy/enable Lampada Soggiorno")
+            
+        self.alarmActive = DISINSERIMENTO    
     
         self.sendEmail(subject, message)
         self.callTaskerTask("Disabilita_Cell")
@@ -193,11 +193,11 @@ class AlarmManager:
         command = "am broadcast -a pl.bossman.taskerproxy.ACTION_TASK --es task_name " + taskName
         
         if par1:
-            command += " --es p1 " + par1
+            command += ' --es p1 "%s"' % par1
         if par2:
-            command += " --es p2 " + par2
+            command += ' --es p2 "%s"' % par2
         if par3:
-            command += " --es p3 " + par3
+            command += ' --es p3 "%s"' % par3
              
         self.sendAdbCommand(command)
         
