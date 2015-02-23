@@ -3,7 +3,6 @@
 
 from alarmManager import AlarmManager
 import SocketServer
-import socket
 from datetime import datetime
 import time
 import logging

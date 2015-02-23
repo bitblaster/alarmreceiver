@@ -101,19 +101,19 @@ class AlarmManager:
     
     def inserimentoTotale(self, subject, message, param):
         self.alarmActive = INSERIMENTO_TOTALE
+
         AlarmManager.callPiServer("allOff/group:1")
-        
-        self.sendEmail(subject, message)
-        self.callTaskerTask("Abilita_Cell")
 
         if param is not None and len(param) > 0:
             iParam = int(param)
             if iParam == 1:
-                #self.callTaskerTask("Pronuncia", "Ciao Roby, a presto!")
-                self.callTaskerTask("Pronuncia", "Uno")
+                self.callTaskerTask("Pronuncia", "Ciao Roby, a presto!")
             elif iParam == 2:
                 self.callTaskerTask("Pronuncia", "Ciao Kate, a presto!")
-        
+                
+        self.sendEmail(subject, message)
+        self.callTaskerTask("Abilita_Cell")
+       
     def inserimentoParziale(self, subject, message, param):
         self.alarmActive = INSERIMENTO_PARZIALE
         
@@ -125,17 +125,16 @@ class AlarmManager:
             
         self.alarmActive = DISINSERIMENTO
             
-        self.sendEmail(subject, message)
-        self.callTaskerTask("Disabilita_Cell")
-        
         if param is not None and len(param) > 0:
             iParam = int(param)
             if iParam == 1:
-                #self.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")
-                self.callTaskerTask("Pronuncia", "Una")
+                self.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")
             elif iParam == 2:
                 self.callTaskerTask("Pronuncia", "Ciao Kate, bentornata a casa!")
     
+        self.sendEmail(subject, message)
+        self.callTaskerTask("Disabilita_Cell")
+        
     def inviaSmsEdEmail(self, subject, message, param):
         self.sendSms(message)
         self.sendEmail(subject, message)
