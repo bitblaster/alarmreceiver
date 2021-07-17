@@ -4,7 +4,7 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pythonCommon'))
 
-from config import Config
+from alarmManager import Config
 from alarmManager import AlarmManager
 import socketserver
 from datetime import datetime

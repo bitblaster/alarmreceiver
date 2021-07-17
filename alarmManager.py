@@ -4,7 +4,6 @@
 import sys, os
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pythonCommon'))
 
-from config import Config
 import logging
 import threading
 import re
@@ -24,6 +23,56 @@ DISABLE_SMS=False
 DISINSERIMENTO = 0
 INSERIMENTO_TOTALE = 1
 INSERIMENTO_PARZIALE = 2
+
+class Config:
+    config=None
+    
+    @staticmethod
+    def load(configFile):
+        import configparser
+        Config.config=configparser.ConfigParser()
+        print('Loading config file ' + configFile)
+        Config.config.read_file(open(configFile))
+        print(Config.config.items('DEFAULT'))
+
+    @staticmethod
+    def get(key, defaultValue=None):
+        if not Config.config:
+           raise Exception('No config file loaded!')
+        
+        try:
+            return Config.config.get('DEFAULT', key)
+        except Exception as e:
+            if defaultValue is None:
+                raise e
+            return defaultValue
+    
+    @staticmethod
+    def getInt(key, defaultValue=None):
+        try:
+            return int(Config.get(key))
+        except Exception as e:
+            if defaultValue is None:
+                raise e
+            return defaultValue
+    
+    @staticmethod
+    def getArray(key, splitChar = ','):
+        return [x.strip() for x in Config.get(key, '').split(splitChar)]
+    
+class FakeSecHead(object):
+    def __init__(self, fp):
+        self.fp = fp
+        self.sechead = '[DEFAULT]\n'
+
+    def readline(self):
+        if self.sechead:
+            try: 
+                return self.sechead
+            finally: 
+                self.sechead = None
+        else: 
+            return self.fp.readline()
 
 # CL-OP -> Inserimento totale
 # NL-OP -> Inserimento parziale
