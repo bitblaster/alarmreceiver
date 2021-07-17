@@ -1,18 +1,24 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*- 
 
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pythonCommon'))
+
 from config import Config
 import logging
 import threading
 import re
 import time
 import smtplib
-import httplib
+#import httplib
+import urllib
+import requests
 import base64
 from Crypto.Cipher import Blowfish
 from email.mime.text import MIMEText
-from ADB import ADB
+#from ADB import ADB
 
+DISABLE_ANDROID_CMDS=True
 DISABLE_SMS=False
 
 DISINSERIMENTO = 0
@@ -36,7 +42,7 @@ class AlarmManager:
     alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)([0-9]+)\^?([^\^]*)\^?\]")
         
     def __init__(self, adbPath):
-        self.adb=ADB(adbPath)
+        #self.adb=ADB(adbPath)
         self.alarmActive = False
         self.threadLock = threading.Lock()
         self.reactions = {            
@@ -54,7 +60,7 @@ class AlarmManager:
             "XT" : {"subject": "Resistenza interna batteria", "execute": self.sendEmail},
             "YM" : {"subject": "Corto circuito/disconnessione batteria", "execute": self.sendEmail},
             "YT" : {"subject": "Batteria inefficiente", "execute": self.sendEmail},
-            "AT" : {"subject": "Mancanza alimentazione", "execute": self.sendEmail},
+            "AT" : {"subject": "Mancanza alimentazione", "execute": self.inviaSmsEdEmail},
             "EM" : {"subject": "Scomparsa dispositivo", "execute": self.sendEmail},
             "DD" : {"subject": "Codice/chiave errati", "execute": self.sendEmail},
             "LB" : {"subject": "Ingresso programmazione", "execute": self.sendEmail},
@@ -67,7 +73,7 @@ class AlarmManager:
             "OP" : {"subject": "Disinserimento", "execute": self.disinserimento},
             "XR" : {"subject": "Ripristino resistenza interna batteria", "execute": self.sendEmail},
             "YR" : {"subject": "Ripristino batteria", "execute": self.sendEmail},
-            "AR" : {"subject": "Ripristino alimentazione", "execute": self.sendEmail},
+            "AR" : {"subject": "Ripristino alimentazione", "execute": self.inviaSmsEdEmail},
             "EN" : {"subject": "Ripristino scomparsa dispositivo", "execute": self.sendEmail},
             "DR" : {"subject": "Ripristino codice/chiave errati", "execute": self.sendEmail},
             "LX" : {"subject": "Uscita programmazione", "execute": self.sendEmail},
@@ -88,7 +94,15 @@ class AlarmManager:
                 message = subject + ": " + desc
                 executeMethod = reaction["execute"]
                 if executeMethod:
+                    # Get lock to synchronize threads
+                    logging.debug("Acquiring lock...")
+                    self.threadLock.acquire()
+                    
                     executeMethod(subject, message, param)
+                    
+                    # Free lock to release next thread
+                    self.threadLock.release()
+                    logging.debug("Lock released!")
             else:
                 logging.warn("Evento sconosciuto: " + tipo + ": " + desc)
             
@@ -97,85 +111,100 @@ class AlarmManager:
     def inserimentoTotale(self, subject, message, param):
         self.alarmActive = INSERIMENTO_TOTALE
 
+        for command in Config.getArray('pi_commands_on_arm'):
+            AlarmManager.callPiServer(command)
+        
         if param is not None and len(param) > 0:
             iParam = int(param)
-            if iParam == 1:
-                self.callTaskerTask("Pronuncia", "Ciao Roby, a presto!")
-            elif iParam == 2:
-                self.callTaskerTask("Pronuncia", "Ciao Cate, a presto!")
-
-        AlarmManager.callPiServer("allOff/group:1")
+            greets=Config.getArray('greetings_on_arm', '|')
+            if len(greets) >= iParam:
+                self.callTaskerTask("Pronuncia", greets[iParam-1])
                 
-        self.sendEmail(subject, message)
-        self.callTaskerTask("Abilita_Cell")
+        AlarmManager.sendTelegramMessage(subject)
+        self.callTaskerTask("Disattiva_Aereo")
+
+        time.sleep(1)
        
     def inserimentoParziale(self, subject, message, param):
         self.alarmActive = INSERIMENTO_PARZIALE
         
-        self.sendEmail(subject, message)
+        AlarmManager.sendTelegramMessage(subject)
     
     def disinserimento(self, subject, message, param):
         if param is not None and len(param) > 0:
             iParam = int(param)
-            if iParam == 1:
-                self.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")
-            elif iParam == 2:
-                self.callTaskerTask("Pronuncia", "Ciao Cate, bentornata a casa!")
+            greets=Config.getArray('greetings_on_disarm', '|')
+            if len(greets) >= iParam:
+                self.callTaskerTask("Pronuncia", greets[iParam-1])
 
         if self.alarmActive==INSERIMENTO_TOTALE: 
-            AlarmManager.callPiServer("switchDeviceFuzzy/enable Lampada Soggiorno")
-            
+            for command in Config.getArray('pi_commands_on_disarm'):
+                AlarmManager.callPiServer(command)
+             
         self.alarmActive = DISINSERIMENTO    
     
-        self.sendEmail(subject, message)
-        self.callTaskerTask("Disabilita_Cell")
+        AlarmManager.sendTelegramMessage(subject)
+        self.callTaskerTask("Attiva_Aereo")
         
     def inviaSmsEdEmail(self, subject, message, param):
         self.sendSms(message)
+        self.sendCriticalTelegramMessage(subject + '; ' + message)
         self.sendEmail(subject, message)
         
     def inviaSmsSeInseritoEdEmail(self, subject, message, param):
         if self.alarmActive:
             self.sendSms(message)
-            
+        
+        self.sendCriticalTelegramMessage(subject + '; ' + message)
         self.sendEmail(subject, message)        
     
     def inviaSmsSeEmailNonFunziona(self, subject, message, param):
         if self.alarmActive:
             self.sendSms(message)
             
+        self.sendCriticalTelegramMessage(subject + '; ' + message)
         self.sendEmail(subject, message)
         
     def sendEmail(self, subject, msg, param=None):
-        # Get lock to synchronize threads
-        logging.debug("Acquiring lock...")
-        self.threadLock.acquire()
-        
         logging.info("Invio email: " + msg)
+        AlarmManager.sendTelegramMessage(subject + '; ' + msg)
+        
         try:
             msg = MIMEText(msg)
 
-            mailFrom = "Antifurto Casa <videomozzi@gmail.com>"
-            mailTo = "Roberto Mozzicato <bitblasters@gmail.com>"
+            mailFrom = Config.get('mail_sender')
+            mailTo = Config.get('mail_recipients')
             msg['Subject'] = subject
             msg['From'] = mailFrom
             msg['To'] = mailTo
     
-            server = smtplib.SMTP('smtp.gmail.com:587')
+            server = smtplib.SMTP(host=Config.get('mail_host'), port=Config.getInt('mail_port'), timeout=6)
             server.starttls()
-            server.login("videomozzi","pwdmarcia*123")
-            server.sendmail(mailFrom, [mailTo], msg.as_string())
+            server.login(Config.get('mail_user'),Config.get('mail_password'))
+            server.sendmail(mailFrom, re.findall("[^<>]+@[^<>]+", mailTo), msg.as_string())
             server.quit()
             
             return True
         except Exception as e:
             logging.error("Errore durante l'invio dell'email: " + str(e))
             return False
-        finally:        
-            # Free lock to release next thread
-            self.threadLock.release()
-            logging.debug("Lock released!")
-        
+
+    @staticmethod
+    def sendTelegramMessage(msg):
+        logging.info("Invio telegram: " + msg)
+        requestUrl = Config.get('telegram_message_url') + urllib.parse.quote_plus(msg)
+        res = requests.get(requestUrl)
+        if res.status_code != 200:
+            logging.error("Error executing request, status: " + str(res.status_code) + ", request: " + requestUrl)
+    
+    @staticmethod
+    def sendCriticalTelegramMessage(msg):
+        logging.info("Invio telegram: " + msg)
+        requestUrl = Config.get('telegram_critical_message_url') + urllib.quote_plus(msg)
+        res = requests.get(requestUrl)
+        if res.status_code != 200:
+            logging.error("Error executing request, status: " + str(res.status_code) + ", request: " + requestUrl)
+               
     def sendSms(self, msg):
         logging.info("Invio sms: " + msg)
         if DISABLE_SMS:
@@ -197,25 +226,32 @@ class AlarmManager:
         self.sendAdbCommand(command)
         
     def sendAdbCommand(self, command):
-        # Get lock to synchronize threads
-        logging.debug("Acquiring lock...")
-        self.threadLock.acquire()
-        
-        self.adb.start_server()
-        self.adb.shell_command(command)
-        
-        # Free lock to release next thread
-        self.threadLock.release()
-        logging.debug("Lock released!")
+        logging.debug("Invio comando Android: " + command)
+        if DISABLE_ANDROID_CMDS:
+            logging.info("Android commands disabled")
+            return
+
+        #self.adb.start_server()
+        #self.adb.shell_command(command)
     
     @staticmethod
     def callPiServer(requestString):
-        requestString = requestString + "?client=raspberry&time=" + str(int(time.time()));
-        logging.debug("Chiamata al server PiHome con request: " + requestString)
-        conn = httplib.HTTPConnection(Config.get('pi_server_url'))
-        conn.request("GET", "/" + AlarmManager.encrypt(requestString))
-        r1 = conn.getresponse()
-        logging.debug("Risposta del server PiHome: %s - %s" % (r1.status, r1.reason))
+        #requestString = requestString + "?client=raspberry&time=" + str(int(time.time()*1000));
+        #logging.debug("Chiamata al server PiHome con request: " + requestString)
+        #conn = httplib.HTTPConnection(Config.get('pi_server_url'))
+        ##conn.request("GET", "/" + AlarmManager.encrypt(requestString))
+        #conn.request("GET", "/" + requestString)
+        #r1 = conn.getresponse()
+        #logging.debug("Risposta del server PiHome: %s - %s" % (r1.status, r1.reason))
+        
+        # DISABILITATO TUTTO DA QUANDO HO MESSO HOME ASSISTANT
+        #requestUrl = Config.get('pi_server_url') + requestString
+        #res = requests.get(requestUrl)
+        #if res.status_code != 200:
+        #    msg = "Error executing request, status: " + str(res.status_code) + ", request: " + requestUrl
+        #    logging.error(msg)
+        #    AlarmManager.sendTelegramMessage(msg)
+        riga_inutile=0
         
     @staticmethod
     def encrypt(message):
@@ -227,6 +263,10 @@ class AlarmManager:
         return base64.urlsafe_b64encode(encrypted)
 
 if __name__ == "__main__":
+    logging.info('-------- AlarmManager TEST startup --------')
+    Config.load('/etc/alarmReceiver.conf')
+
     alarmManager = AlarmManager("/opt/adb")
     s = '"SIA-DCS"0091L0#001234[#001234|Nri0CL0]_06:43:58,02-15-2015'
     alarmManager.manageAlarmMessage(s)
+    #alarmManager.callTaskerTask("Pronuncia", "Ciao Roby, bentornato a casa!")

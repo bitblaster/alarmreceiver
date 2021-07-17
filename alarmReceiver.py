@@ -1,14 +1,16 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*- 
 
-from alarmManager import AlarmManager
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pythonCommon'))
+
 from config import Config
-import SocketServer
+from alarmManager import AlarmManager
+import socketserver
 from datetime import datetime
 import time
 import logging
 import threading
-import sys
 
 if len(sys.argv) > 1 and sys.argv[1] == "1":
     adbPath = "/opt/android-sdk-linux_x86/platform-tools/adb"
@@ -32,7 +34,7 @@ ID_STRING='"SIA-DCS"'
 
 alarmManager = AlarmManager(adbPath)
 
-class AlarmTCPHandler(SocketServer.BaseRequestHandler):
+class AlarmTCPHandler(socketserver.BaseRequestHandler):
     """
     The RequestHandler class for our server.
 
@@ -43,7 +45,7 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
 
     def handle(self):
         # self.request is the TCP socket connected to the client
-        line = self.request.recv(1024).strip()
+        line = self.request.recv(1024).strip().decode('ascii')
         logging.info("Ricevuto messaggio:".format(self.client_address[0]))
         logging.info(line)
         try:
@@ -65,11 +67,10 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
             CRC = AlarmTCPHandler.CRCCalc(response)
             response="\n" + CRC + header + response + "\r"
             logging.info("Rispondo: " + response)
-            self.request.sendall(response)
+            self.request.sendall(response.encode('ascii'))
 
             t = threading.Thread(target=alarmManager.manageAlarmMessage, args=[inputMessage])
             t.start()
-
         except Exception as inst:
             logging.info("Errore: " + str(inst) + "\nMessaggio ignorato")
     
@@ -88,18 +89,41 @@ class AlarmTCPHandler(SocketServer.BaseRequestHandler):
         return ('%x' % CRC).upper().zfill(4)
 
 if __name__ == "__main__":
-    # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
-    HOST, PORT = "", Config.getInt("server_port")
-    #HOST, PORT = "localhost", 9505
-
-    #s = '"SIA-DCS"0091L0#001234[#001234|Nri0LB0]_06:43:58,02-15-2015'
-    #alarmManager.manageAlarmMessage(s)
+    Config.load('/etc/alarmReceiver.conf')
     
-    logging.info((HOST, PORT))
-    # Create the server, binding to localhost on port 9999
-    SocketServer.TCPServer.allow_reuse_address = True
-    server = SocketServer.TCPServer((HOST, PORT), AlarmTCPHandler)
+    if len(sys.argv) > 1 and sys.argv[1] == "-t":
+        logging.info('-------- AlarmReceiver TEST startup --------')
+        
+        print ("dovrebbero essere inviati messaggi nel seguente ordine:\n"
+                "Inserimento totale (solo email)\n"
+                "Sabotaggio (email + SMS)\n"
+                "Allarme intrusione (email + SMS)\n"
+                "Disinserimento (solo email)\n"
+                "Sabotaggio (solo email)\n"
+        )
+        messages = [
+            #'"SIA-DCS"0091L0#001234[#001234|Nri0CL0]_06:43:58,02-15-2015',
+            #'"SIA-DCS"0091L0#001234[#001234|Nri0TA0]_06:43:58,02-15-2015',
+            #'"SIA-DCS"0091L0#001234[#001234|Nri0BA0^IR Ingresso     Appartamento    ^]_06:43:58,02-15-2015',
+            #'"SIA-DCS"0091L0#001234[#001234|Nri0OP0]_06:43:58,02-15-2015',
+            #'"SIA-DCS"0091L0#001234[#001234|Nri0TA0]_06:43:58,02-15-2015'
+        ]
+        for m in messages:
+            alarmManager.manageAlarmMessage(m)
+            time.sleep(20)            
+    else:
+        logging.info('-------- AlarmReceiver startup --------')
+        alarmManager.sendTelegramMessage('-------- AlarmReceiver startup --------')
+        # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
+        HOST, PORT = "", Config.getInt("server_port")
+        #HOST, PORT = "localhost", 9505
 
-    # Activate the server; this will keep running until you
-    # interrupt the program with Ctrl-C
-    server.serve_forever()
+        
+        logging.info((HOST, PORT))
+        # Create the server, binding to localhost on port 9999
+        socketserver.TCPServer.allow_reuse_address = True
+        server = socketserver.TCPServer((HOST, PORT), AlarmTCPHandler)
+
+        # Activate the server; this will keep running until you
+        # interrupt the program with Ctrl-C
+        server.serve_forever()

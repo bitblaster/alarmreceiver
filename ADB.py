@@ -11,9 +11,9 @@ try:
     import sys
     import subprocess
     import re
-    from os import popen3 as pipe
+    #from os import popen3 as pipe
 except ImportError as e:
-    print "[!] Required module missing. %s" % e.args[0]
+    print("[!] Required module missing. %s" % e.args[0])
     sys.exit(-1)
 
 
@@ -101,8 +101,8 @@ class ADB(object):
             cmdp = subprocess.Popen(args, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             self.__output, self.__error = cmdp.communicate()
             retcode = cmdp.wait()
-            return self.__output.rstrip('\n')
-        except OSError, e:
+            return self.__output.rstrip(b'\n')
+        except OSError as e:
             self.__error = str(e)
 
         return
@@ -126,7 +126,7 @@ class ADB(object):
         """
 
         if self.get_version() is None:
-            print "[-] adb executable not found"
+            print("[-] adb executable not found")
             return False
         return True
 
@@ -224,7 +224,7 @@ class ADB(object):
         if device is None or not device in self.__devices.values():
 
             self.__error = 'Must get device list first'
-            print "[!] Device not found in device list"
+            print("[!] Device not found in device list")
             return False
         self.__target = device
         return "[+] Target device set: %s" % self.get_target_device()
@@ -236,7 +236,7 @@ class ADB(object):
         """
         if device is None or not device in self.__devices:
             self.__error = 'Must get device list first'
-            print "[!] Device not found in device list"
+            print("[!] Device not found in device list")
             return False
         self.__target = self.__devices[device]
         return "[+] Target device set: %s" % self.get_target_device()
@@ -246,7 +246,7 @@ class ADB(object):
         Returns the selected device to work with
         """
         if self.__target == None:
-            print "[*] No device target set"
+            print("[*] No device target set")
 
         return self.__target
 

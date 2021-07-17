@@ -1,0 +1,13 @@
+[Unit]
+Description=Alarm SiaIP Receiver Service
+After=multi-user.target
+
+[Service]
+Type=idle
+WorkingDirectory=/opt/alarmReceiver
+ExecStart=/usr/bin/python3 /opt/alarmReceiver/alarmReceiver.py
+#ExecStopPost=/opt/adb kill-server
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
