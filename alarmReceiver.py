@@ -1,9 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*- 
 
-import sys, os
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pythonCommon'))
-
+import sys
 from alarmManager import Config
 from alarmManager import AlarmManager
 import socketserver
