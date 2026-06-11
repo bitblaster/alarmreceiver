@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import sys
-from alarmManager import Config
+from alarmManager import AppConfig
 from alarmManager import AlarmManager
 import socketserver
 from datetime import datetime
@@ -80,7 +80,7 @@ class AlarmTCPHandler(socketserver.BaseRequestHandler):
         return ('%x' % CRC).upper().zfill(4)
 
 if __name__ == "__main__":
-    Config.load('/etc/alarmReceiver.conf')
+    cfg = AppConfig.load()
 
     alarmManager = AlarmManager()
 
@@ -105,9 +105,10 @@ if __name__ == "__main__":
             alarmManager.manageAlarmMessage(m)
             time.sleep(20)
     else:
+        alarmManager.start(cfg)
         logging.info('-------- AlarmReceiver startup --------')
         # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
-        HOST, PORT = "", Config.getInt("server_port")
+        HOST, PORT = "", cfg.server_port
         #HOST, PORT = "localhost", 9505
 
         logging.info((HOST, PORT))
