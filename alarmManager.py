@@ -7,6 +7,7 @@ import re
 import time
 import socket
 import binascii
+import json
 import threading
 import yaml
 import paho.mqtt.client as mqtt
@@ -29,7 +30,7 @@ TOPIC_DEVICE     = "alarm/fault/device"  # ON / OFF
 TOPIC_OUTPUT     = "alarm/fault/output"  # ON / OFF
 TOPIC_BYPASS     = "alarm/fault/bypass"  # ON / OFF
 TOPIC_LAST_EVENT = "alarm/last_event"    # testo libero dell'ultimo evento
-TOPIC_ERRORS     = "alarm/errors"        # OK | elenco zone aperte
+TOPIC_ATTRIBUTES = "alarm/attributes"    # OK | elenco zone aperte
 TOPIC_COMMAND    = "alarm/command"       # DISARM | ARM_AWAY | ARM_HOME  (da HA)
 
 # ---------------------------------------------------------------------------
@@ -292,11 +293,11 @@ class AlarmManager:
         logging.info("Comando: ARM_AWAY")
         ok, resp = self._runCommand("zone_verify")
         if not ok:
-            # zone aperte: pubblica errori e blocca l'inserimento
-            self._handleZoneErrors(resp)
+            logging.warning("ARM_AWAY annullato: verifica zone fallita")
+            return
+        if self._handleZoneErrors(resp):
             logging.warning("ARM_AWAY annullato: zone aperte")
             return
-        self.mqttPublish(TOPIC_ERRORS, "OK")
         ok, _ = self._runCommand("alarm_arm")
         if ok:
             logging.info("Inserimento totale riuscito")
@@ -355,7 +356,7 @@ class AlarmManager:
                 else:
                     logging.warning("Verifica periodica zone: comando fallito")
 
-    def _handleZoneErrors(self, response: bytes):
+    def _handleZoneErrors(self, response: bytes) -> bool:
         """Pubblica su alarm/errors le zone che risultano aperte."""
         messages = []
         for zone in self._zones:
@@ -365,7 +366,8 @@ class AlarmManager:
             except IndexError:
                 pass
         payload = ", ".join(messages) if messages else "OK"
-        self.mqttPublish(TOPIC_ERRORS, payload)
+        self.mqttPublish(TOPIC_ATTRIBUTES, json.dumps({"errors": payload}))
+        return bool(messages)
 
     # -----------------------------------------------------------------------
     # Parsing messaggi SIA-IP
