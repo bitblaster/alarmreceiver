@@ -7,15 +7,16 @@ import re
 import time
 import socket
 import binascii
+import threading
 import yaml
 import paho.mqtt.client as mqtt
 
 # ---------------------------------------------------------------------------
-# Costanti stato allarme interno
+# Costanti stato allarme (valori attesi da Home Assistant)
 # ---------------------------------------------------------------------------
-DISINSERIMENTO       = 0
-INSERIMENTO_TOTALE   = 1
-INSERIMENTO_PARZIALE = 2
+STATE_DISARMED   = "disarmed"
+STATE_ARMED_AWAY = "armed_away"
+STATE_ARMED_HOME = "armed_home"
 
 # ---------------------------------------------------------------------------
 # Topic MQTT pubblicati verso Home Assistant
@@ -160,8 +161,6 @@ class AlarmManager:
     alarmPattern = re.compile(r"\[#[0-9]{6}\|....(..)([0-9]+)\^?([^\^]*)\^?\]")
 
     def __init__(self):
-        self.alarmActive = DISINSERIMENTO
-
         # Client MQTT persistente (connesso una volta sola)
         self._mqttClient = None
 
@@ -240,6 +239,8 @@ class AlarmManager:
         # loop_start() avvia il thread di rete in background;
         # il chiamante (es. il server SIA-IP) gestirà il proprio loop principale.
         self._mqttClient.loop_start()
+
+        threading.Thread(target=self._periodicCheck, daemon=True, name="periodic-check").start()
 
     # -----------------------------------------------------------------------
     # Callback MQTT
@@ -322,20 +323,37 @@ class AlarmManager:
             logging.error("Disinserimento fallito")
 
     def _execAlarmStatus(self):
-        """Interroga la centralina e pubblica lo stato corrente su alarm/state."""
+        """Interroga la centralina, pubblica lo stato e restituisce la costante di stato (o None)."""
         logging.info("Richiesta stato centralina")
         ok, resp = self._runCommand("alarm_status")
         if not ok:
             logging.warning("Impossibile leggere lo stato della centralina")
-            return
+            return None
         if resp == b"\x00\x00":
-            self.mqttPublish(TOPIC_STATE, "armed_away")
+            self.mqttPublish(TOPIC_STATE, STATE_ARMED_AWAY)
+            return STATE_ARMED_AWAY
         elif resp == b"\x01\x01":
-            self.mqttPublish(TOPIC_STATE, "armed_home")
+            self.mqttPublish(TOPIC_STATE, STATE_ARMED_HOME)
+            return STATE_ARMED_HOME
         elif resp == b"\x02\x02":
-            self.mqttPublish(TOPIC_STATE, "disarmed")
+            self.mqttPublish(TOPIC_STATE, STATE_DISARMED)
+            return STATE_DISARMED
         else:
             logging.warning(f"Risposta stato sconosciuta: {resp.hex()}")
+            return None
+
+    def _periodicCheck(self):
+        """Ogni 10 minuti verifica stato; se disinserito, controlla anche le zone."""
+        while True:
+            time.sleep(600)
+            logging.info("Verifica periodica stato centralina")
+            status = self._execAlarmStatus()
+            if status == STATE_DISARMED:
+                ok, resp = self._runCommand("zone_verify")
+                if ok:
+                    self._handleZoneErrors(resp)
+                else:
+                    logging.warning("Verifica periodica zone: comando fallito")
 
     def _handleZoneErrors(self, response: bytes):
         """Pubblica su alarm/errors le zone che risultano aperte."""
@@ -384,16 +402,13 @@ class AlarmManager:
     # -----------------------------------------------------------------------
 
     def inserimentoTotale(self, subject, message, param):
-        self.alarmActive = INSERIMENTO_TOTALE
-        self.mqttPublish(TOPIC_STATE, "armed_away")
+        self.mqttPublish(TOPIC_STATE, STATE_ARMED_AWAY)
 
     def inserimentoParziale(self, subject, message, param):
-        self.alarmActive = INSERIMENTO_PARZIALE
-        self.mqttPublish(TOPIC_STATE, "armed_home")
+        self.mqttPublish(TOPIC_STATE, STATE_ARMED_HOME)
 
     def disinserimento(self, subject, message, param):
-        self.alarmActive = DISINSERIMENTO
-        self.mqttPublish(TOPIC_STATE, "disarmed")
+        self.mqttPublish(TOPIC_STATE, STATE_DISARMED)
 
     def allarmeIntrusione(self, subject, message, param):
         self.mqttPublish(TOPIC_STATE, "triggered")
@@ -402,12 +417,7 @@ class AlarmManager:
         self.mqttPublish(TOPIC_STATE, "triggered")
 
     def ripristinoAllarme(self, subject, message, param):
-        if self.alarmActive == INSERIMENTO_TOTALE:
-            self.mqttPublish(TOPIC_STATE, "armed_away")
-        elif self.alarmActive == INSERIMENTO_PARZIALE:
-            self.mqttPublish(TOPIC_STATE, "armed_home")
-        else:
-            self.mqttPublish(TOPIC_STATE, "disarmed")
+        self._execAlarmStatus()
 
     # -----------------------------------------------------------------------
     # Handler fault binari (SIA-IP)
