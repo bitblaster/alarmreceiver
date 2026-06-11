@@ -106,7 +106,6 @@ if __name__ == "__main__":
             time.sleep(20)
     else:
         logging.info('-------- AlarmReceiver startup --------')
-        alarmManager.sendTelegramMessage('-------- AlarmReceiver startup --------')
         # Primo parametro vuoto per esporre il socket su tutte le interfacce di rete
         HOST, PORT = "", Config.getInt("server_port")
         #HOST, PORT = "localhost", 9505
