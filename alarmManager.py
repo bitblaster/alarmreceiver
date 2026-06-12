@@ -25,7 +25,7 @@ STATE_ARMED_HOME = "armed_home"
 TOPIC_STARTUP     = "alarm/startup"       # started
 TOPIC_STATE       = "alarm/state"         # armed_away | armed_home | disarmed | triggered
 TOPIC_ACCESS_OPEN = "alarm/access_open"   # ON / OFF
-TOPIC_POWER       = "alarm/fault/power"   # ON / OFF
+TOPIC_POWER       = "alarm/power"         # ON / OFF
 TOPIC_BATTERY     = "alarm/fault/battery" # ON / OFF
 TOPIC_DEVICE      = "alarm/fault/device"  # ON / OFF
 TOPIC_OUTPUT      = "alarm/fault/output"  # ON / OFF
@@ -75,8 +75,12 @@ class AppConfig:
         self.mqtt_password = mqtt_cfg['password']
 
         alarm = data.get('alarm_system', {})
-        self.alarm_ip   = alarm['ip']
-        self.alarm_port = int(alarm['port'])
+        self.alarm_ip       = alarm['ip']
+        self.alarm_port     = int(alarm['port'])
+        self.security_code      = alarm.get('security_code', '')
+        self.tz_offset_min      = int(alarm.get('tz_offset_min', 60))
+        self.timezone_name      = alarm.get('timezone_name', '')
+        self.time_sync_interval = int(alarm.get('time_sync_interval', 3600))
 
         server = data.get('server', {})
         self.server_port = int(server['port'])
@@ -109,7 +113,7 @@ class TcpCommandExecutor:
         self.ip   = ip
         self.port = port
 
-    def run(self, steps: list) -> tuple:
+    def run(self, steps: list, final_delay: float = DELAY_BETWEEN) -> tuple:
         """
         Esegue tutti i passi di un comando.
         Ritorna (True, last_response) se tutti i passi hanno esito positivo,
@@ -147,7 +151,8 @@ class TcpCommandExecutor:
                     else:
                         success = True   # nessuna risposta attesa → OK
 
-                    time.sleep(DELAY_BETWEEN)
+                    delay = final_delay if i == len(steps) - 1 else DELAY_BETWEEN
+                    time.sleep(delay)
 
         except Exception as e:
             logging.error(f"TCP connection error: {e}")
@@ -167,9 +172,14 @@ class AlarmManager:
         self._mqttClient = None
 
         # Componenti TCP (popolati in start())
-        self._tcpExecutor = None
-        self._commands    = {}
-        self._zones       = []
+        self._tcpExecutor       = None
+        self._commands          = {}
+        self._zones             = []
+        self._securityCodeHex   = ''
+        self._tzOffsetMin       = 60
+        self._timezoneName      = ''
+        self._timeSyncInterval  = 3600
+        self._alarmState        = STATE_DISARMED   # aggiornato dagli eventi SIA-IP
 
         # Mappa eventi SIA-IP → handler
         self.reactions = {
@@ -223,9 +233,13 @@ class AlarmManager:
 
     def start(self, cfg: AppConfig):
         # Inizializza il componente TCP
-        self._tcpExecutor = TcpCommandExecutor(cfg.alarm_ip, cfg.alarm_port)
-        self._commands    = cfg.commands
-        self._zones       = cfg.zones
+        self._tcpExecutor      = TcpCommandExecutor(cfg.alarm_ip, cfg.alarm_port)
+        self._commands         = cfg.commands
+        self._zones            = cfg.zones
+        self._securityCodeHex  = cfg.security_code.encode('ascii').hex()
+        self._tzOffsetMin      = cfg.tz_offset_min
+        self._timezoneName     = cfg.timezone_name
+        self._timeSyncInterval = cfg.time_sync_interval
         logging.info(f"Centralina INIM: {cfg.alarm_ip}:{cfg.alarm_port}, "
                      f"{len(self._commands)} comandi, {len(self._zones)} zone")
 
@@ -245,6 +259,7 @@ class AlarmManager:
         self._mqttClient.loop_start()
 
         threading.Thread(target=self._periodicCheck, daemon=True, name="periodic-check").start()
+        threading.Thread(target=self._periodicTimeSync, daemon=True, name="time-sync").start()
 
     # -----------------------------------------------------------------------
     # Callback MQTT
@@ -341,17 +356,172 @@ class AlarmManager:
             logging.warning("Impossibile leggere lo stato della centralina")
             return None
         if resp == b"\x00\x00":
+            self._alarmState = STATE_ARMED_AWAY
             self.mqttPublish(TOPIC_STATE, STATE_ARMED_AWAY)
             return STATE_ARMED_AWAY
         elif resp == b"\x01\x01":
+            self._alarmState = STATE_ARMED_HOME
             self.mqttPublish(TOPIC_STATE, STATE_ARMED_HOME)
             return STATE_ARMED_HOME
         elif resp == b"\x02\x02":
+            self._alarmState = STATE_DISARMED
             self.mqttPublish(TOPIC_STATE, STATE_DISARMED)
             return STATE_DISARMED
         else:
             logging.warning(f"Risposta stato sconosciuta: {resp.hex()}")
             return None
+
+    # -----------------------------------------------------------------------
+    # Sincronizzazione ora sulla centralina INIM
+    # -----------------------------------------------------------------------
+
+    def _buildSetTimeSteps(self) -> list:
+        """
+        Costruisce la sequenza di TcpCommand per impostare data/ora corrente.
+
+        Protocollo reverse-engineered da cattura SmartLeague:
+        - Bytes 8-11 dei comandi write = timestamp 32-bit little-endian
+          (secondi trascorsi dal 01/01/2000 00:00:00 ora locale)
+        - Checksum byte 7 = somma bytes 0-6 mod 256
+        - Letture preparatorie: richieste dal protocollo prima di ogni scrittura
+        """
+        import datetime as dt
+
+        # Ottieni l'ora locale corretta per la centralina.
+        # Se timezone_name è configurato (es. "Europe/Rome") lo usa esplicitamente,
+        # gestendo automaticamente ora legale (CEST/CET).
+        # Fallback: usa il timezone di sistema (funziona se il server è configurato correttamente).
+        if self._timezoneName:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(self._timezoneName)
+            now = dt.datetime.now(tz=tz).replace(tzinfo=None)
+        else:
+            now = dt.datetime.now().astimezone().replace(tzinfo=None)
+
+        epoch = dt.datetime(2000, 1, 1)
+        REBOOT_DELAY_SEC = 8  # la centralina impiega ~8s per riavviarsi dopo la write
+        ts = (int((now - epoch).total_seconds()) + REBOOT_DELAY_SEC).to_bytes(4, byteorder='little')
+
+        def _chk(b: bytes) -> int:
+            return sum(b) & 0xFF
+
+        def write12(addr: int, d0: int, d1: int, d2: int) -> str:
+            """Write command 12 byte con timestamp."""
+            hdr = bytes([0x01, 0x00, (addr >> 8) & 0xFF, addr & 0xFF, d0, d1, d2])
+            return (hdr + bytes([_chk(hdr)]) + ts).hex()
+
+        def write_short(addr: int, d0: int, d1: int, d2: int, extra: bytes) -> str:
+            """Write command senza timestamp."""
+            hdr = bytes([0x01, 0x00, (addr >> 8) & 0xFF, addr & 0xFF, d0, d1, d2])
+            return (hdr + bytes([_chk(hdr)]) + extra).hex()
+
+        tz  = self._tzOffsetMin & 0xFF
+        mon = now.month
+        yr  = now.year - 1990
+        wd  = now.weekday()  # Lun=0, Mar=1, ..., Ven=4, Sab=5, Dom=6 (come SmartLeague)
+
+        return [
+            TcpCommand(send=self._securityCodeHex, expect=""),
+            # Scrittura offset fuso orario in minuti + timestamp (addr 0x000D) — ~2s risposta
+            TcpCommand(send=write12(0x000D, tz, 0x00, 0x04),                   expect="*"),
+            # Scrittura mese (addr 0x0165)
+            TcpCommand(send=write12(0x0165, mon, 0x00, 0x04),                  expect="*"),
+            # Scrittura anno - 1990 (addr 0x0172) — triggera reboot centralina
+            TcpCommand(send=write_short(0x0172, yr, 0x00, 0x01, b'\x04'),      expect="*"),
+            # Scrittura giorno settimana Lun=0..Dom=6 (addr 0x0040)
+            TcpCommand(send=write_short(0x0040, wd, 0x00, 0x02, b'\x00\x00'), expect="*"),
+        ]
+
+    def _setTime(self):
+        """Imposta data e ora corrente sulla centralina."""
+        import datetime as dt
+        if self._timezoneName:
+            from zoneinfo import ZoneInfo
+            now = dt.datetime.now(tz=ZoneInfo(self._timezoneName)).replace(tzinfo=None)
+        else:
+            now = dt.datetime.now().astimezone().replace(tzinfo=None)
+        logging.info(f"Impostazione ora centralina: {now.strftime('%d/%m/%Y %H:%M:%S')}")
+        if not self._securityCodeHex:
+            logging.warning("security_code non configurato in alarm_system — impostazione ora saltata")
+            return
+        steps = self._buildSetTimeSteps()
+        ok, _ = self._tcpExecutor.run(steps, final_delay=1.0)
+        if ok:
+            logging.info("Ora centralina aggiornata con successo")
+        else:
+            logging.error("Impossibile impostare l'ora sulla centralina")
+
+    def _getLocalNow(self):
+        """Ora locale corrente nel timezone configurato per la centralina."""
+        import datetime as dt
+        if self._timezoneName:
+            from zoneinfo import ZoneInfo
+            return dt.datetime.now(tz=ZoneInfo(self._timezoneName)).replace(tzinfo=None)
+        return dt.datetime.now().astimezone().replace(tzinfo=None)
+
+    def _readPanelTime(self):
+        """
+        Legge l'ora corrente dalla centralina e la restituisce come datetime naive (ora locale), oppure None.
+
+        Protocollo (reverse-engineered da cattura SmartLeague 20260612):
+          - Auth + login, poi 3 letture preparatorie (identiche al write)
+          - Lettura addr 0x000D, params 3c 00, 4 byte:
+            risposta = timestamp LE32 (secondi dal 01/01/2000 ora locale) + checksum
+        """
+        import datetime as dt
+        if not self._securityCodeHex:
+            return None
+        tz_byte = self._tzOffsetMin & 0xFF
+        read_hdr = bytes([0x00, 0x00, 0x00, 0x0D, tz_byte, 0x00, 0x04])
+        read_chk = sum(read_hdr) & 0xFF
+        read_cmd = (read_hdr + bytes([read_chk])).hex()
+        steps = [
+			TcpCommand(send=self._securityCodeHex,    expect=""),
+            TcpCommand(send=read_cmd, expect="*"),  # legge timestamp 4-byte LE32
+        ]
+        ok, resp = self._tcpExecutor.run(steps)
+        if not ok or len(resp) < 4:
+            logging.warning("Lettura ora centralina fallita")
+            return None
+        ts_sec = int.from_bytes(resp[:4], byteorder='little')
+        epoch = dt.datetime(2000, 1, 1)
+        panel_time = epoch + dt.timedelta(seconds=ts_sec)
+        logging.debug(f"Ora centralina letta: {panel_time.strftime('%d/%m/%Y %H:%M:%S')} (ts={ts_sec})")
+        return panel_time
+
+    def _conditionalSetTime(self):
+        """
+        Imposta l'ora sulla centralina solo se:
+          1. L'allarme è disarmato (evita interruzioni durante inserimento)
+          2. La deriva rispetto all'ora corrente è > 60s (evita scritture EEPROM inutili)
+        """
+        if self._alarmState != STATE_DISARMED:
+            logging.debug("Sincronizzazione ora saltata: allarme non disarmato "
+                          f"(stato: {self._alarmState})")
+            return
+
+        now = self._getLocalNow()
+        panel_time = self._readPanelTime()
+
+        if panel_time is not None:
+            drift_sec = abs((now - panel_time).total_seconds())
+            logging.debug(f"Ora centralina: {panel_time.strftime('%H:%M:%S')}, "
+                         f"deriva: {drift_sec:.0f}s")
+            if drift_sec <= 60:
+                logging.debug("Ora centralina entro 60s — aggiornamento non necessario")
+                return
+        else:
+            logging.debug("Lettura ora centralina non disponibile — aggiornamento eseguito")
+
+        self._setTime()
+
+    def _periodicTimeSync(self):
+        """Controlla e sincronizza l'ora periodicamente."""
+        time.sleep(10)   # attesa avvio sistema
+        self._conditionalSetTime()
+        while True:
+            time.sleep(self._timeSyncInterval)
+            self._conditionalSetTime()
 
     def _periodicCheck(self):
         """Ogni 10 minuti verifica stato; se disinserito, controlla anche le zone."""
@@ -414,18 +584,23 @@ class AlarmManager:
     # -----------------------------------------------------------------------
 
     def inserimentoTotale(self, subject, message, param):
+        self._alarmState = STATE_ARMED_AWAY
         self.mqttPublish(TOPIC_STATE, STATE_ARMED_AWAY)
 
     def inserimentoParziale(self, subject, message, param):
+        self._alarmState = STATE_ARMED_HOME
         self.mqttPublish(TOPIC_STATE, STATE_ARMED_HOME)
 
     def disinserimento(self, subject, message, param):
+        self._alarmState = STATE_DISARMED
         self.mqttPublish(TOPIC_STATE, STATE_DISARMED)
 
     def allarmeIntrusione(self, subject, message, param):
+        self._alarmState = "triggered"
         self.mqttPublish(TOPIC_STATE, "triggered")
 
     def sabotaggio(self, subject, message, param):
+        self._alarmState = "triggered"
         self.mqttPublish(TOPIC_STATE, "triggered")
 
     def ripristinoAllarme(self, subject, message, param):
@@ -455,8 +630,8 @@ class AlarmManager:
             # IndexError: indice fuori range
             pass
 
-    def faultPowerOn(self, subject, message, param):   self.mqttPublish(TOPIC_POWER,       "ON")
-    def faultPowerOff(self, subject, message, param):  self.mqttPublish(TOPIC_POWER,       "OFF")
+    def faultPowerOn(self, subject, message, param):   self.mqttPublish(TOPIC_POWER,       "OFF")
+    def faultPowerOff(self, subject, message, param):  self.mqttPublish(TOPIC_POWER,       "ON")
     def faultBatteryOn(self, subject, message, param): self.mqttPublish(TOPIC_BATTERY,     "ON")
     def faultBatteryOff(self, subject, message, param):self.mqttPublish(TOPIC_BATTERY,     "OFF")
     def faultDeviceOn(self, subject, message, param):  self.mqttPublish(TOPIC_DEVICE,      "ON")
