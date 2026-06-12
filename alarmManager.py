@@ -22,16 +22,16 @@ STATE_ARMED_HOME = "armed_home"
 # ---------------------------------------------------------------------------
 # Topic MQTT pubblicati verso Home Assistant
 # ---------------------------------------------------------------------------
-TOPIC_STARTUP    = "alarm/startup"       # started
-TOPIC_STATE      = "alarm/state"         # armed_away | armed_home | disarmed | triggered
-TOPIC_POWER      = "alarm/fault/power"   # ON / OFF
-TOPIC_BATTERY    = "alarm/fault/battery" # ON / OFF
-TOPIC_DEVICE     = "alarm/fault/device"  # ON / OFF
-TOPIC_OUTPUT     = "alarm/fault/output"  # ON / OFF
-TOPIC_BYPASS     = "alarm/fault/bypass"  # ON / OFF
-TOPIC_LAST_EVENT = "alarm/last_event"    # testo libero dell'ultimo evento
-TOPIC_ATTRIBUTES = "alarm/attributes"    # OK | elenco zone aperte
-TOPIC_COMMAND    = "alarm/command"       # DISARM | ARM_AWAY | ARM_HOME  (da HA)
+TOPIC_STARTUP     = "alarm/startup"       # started
+TOPIC_STATE       = "alarm/state"         # armed_away | armed_home | disarmed | triggered
+TOPIC_ACCESS_OPEN = "alarm/access_open"   # ON / OFF
+TOPIC_POWER       = "alarm/fault/power"   # ON / OFF
+TOPIC_BATTERY     = "alarm/fault/battery" # ON / OFF
+TOPIC_DEVICE      = "alarm/fault/device"  # ON / OFF
+TOPIC_OUTPUT      = "alarm/fault/output"  # ON / OFF
+TOPIC_BYPASS      = "alarm/fault/bypass"  # ON / OFF
+TOPIC_ATTRIBUTES  = "alarm/attributes"    # OK | elenco zone aperte
+TOPIC_COMMAND     = "alarm/command"       # DISARM | ARM_AWAY | ARM_HOME  (da HA)
 
 # ---------------------------------------------------------------------------
 # Timeout / delay comunicazione TCP con la centralina
@@ -52,8 +52,9 @@ class TcpCommand:
 
 class Zone:
     """Zona della centralina usata per zone_verify."""
-    def __init__(self, description: str, byte: int, value: int):
+    def __init__(self, description: str, topic: str, byte: int, value: int):
         self.description = description
+        self.topic       = topic
         self.byte        = byte
         self.value       = value
 
@@ -183,6 +184,10 @@ class AlarmManager:
             "BR": {"subject": "Ripristino allarme intrusione",          "execute": self.ripristinoAllarme},
             "TR": {"subject": "Ripristino sabotaggio",                  "execute": self.ripristinoAllarme},
 
+            # Zone
+            "DO": {"subject": "Accesso aperto",                         "execute": self.accessOpen},
+            "DR": {"subject": "Accesso chiuso",                         "execute": self.accessClosed},
+
             # Alimentazione
             "AT": {"subject": "Mancanza alimentazione",                 "execute": self.faultPowerOn},
             "AR": {"subject": "Ripristino alimentazione",               "execute": self.faultPowerOff},
@@ -191,8 +196,6 @@ class AlarmManager:
             "YM": {"subject": "Corto circuito/disconnessione batteria", "execute": self.faultBatteryOn},
             "YT": {"subject": "Batteria inefficiente",                  "execute": self.faultBatteryOn},
             "YR": {"subject": "Ripristino batteria",                    "execute": self.faultBatteryOff},
-            "XT": {"subject": "Resistenza interna batteria",            "execute": self.onlyLastEvent},
-            "XR": {"subject": "Ripristino resistenza interna batteria", "execute": self.onlyLastEvent},
 
             # Dispositivi
             "EM": {"subject": "Scomparsa dispositivo",                  "execute": self.faultDeviceOn},
@@ -253,7 +256,14 @@ class AlarmManager:
             client.subscribe(TOPIC_COMMAND)
             logging.info(f"Iscritto a {TOPIC_COMMAND}")
             # Sincronizza lo stato all'avvio
-            self._execAlarmStatus()
+            status = self._execAlarmStatus()
+            if status == STATE_DISARMED:
+                ok, resp = self._runCommand("zone_verify")
+                if ok:
+                    self._handleZoneErrors(resp)
+                else:
+                    logging.warning("Verifica zone: comando fallito")
+
         else:
             logging.error(f"MQTT connessione fallita, codice: {reason_code}")
 
@@ -391,7 +401,7 @@ class AlarmManager:
         message       = subject + (f": {desc}" if desc else "")
         executeMethod = reaction["execute"]
 
-        self.mqttPublish(TOPIC_LAST_EVENT, message)
+        #self.mqttPublish(TOPIC_LAST_EVENT, message)
 
         if executeMethod:
             try:
@@ -425,16 +435,36 @@ class AlarmManager:
     # Handler fault binari (SIA-IP)
     # -----------------------------------------------------------------------
 
-    def faultPowerOn(self, subject, message, param):   self.mqttPublish(TOPIC_POWER,   "ON")
-    def faultPowerOff(self, subject, message, param):  self.mqttPublish(TOPIC_POWER,   "OFF")
-    def faultBatteryOn(self, subject, message, param): self.mqttPublish(TOPIC_BATTERY, "ON")
-    def faultBatteryOff(self, subject, message, param):self.mqttPublish(TOPIC_BATTERY, "OFF")
-    def faultDeviceOn(self, subject, message, param):  self.mqttPublish(TOPIC_DEVICE,  "ON")
-    def faultDeviceOff(self, subject, message, param): self.mqttPublish(TOPIC_DEVICE,  "OFF")
-    def faultBypassOn(self, subject, message, param):  self.mqttPublish(TOPIC_BYPASS,  "ON")
-    def faultBypassOff(self, subject, message, param): self.mqttPublish(TOPIC_BYPASS,  "OFF")
-    def faultOutputOn(self, subject, message, param):  self.mqttPublish(TOPIC_OUTPUT,  "ON")
-    def faultOutputOff(self, subject, message, param): self.mqttPublish(TOPIC_OUTPUT,  "OFF")
+    def accessOpen(self, subject, message, param):
+        try:
+            # In Smartleague i codici evento attivazione/disattivazione non vengono rispettati
+            # Viene mandato il progressivo della finestra così come definito in Smartleague, a partire da 1
+            zoneTopic = self._zones[int(param)-1].topic
+            self.mqttPublish(zoneTopic, "OPEN")
+        except (ValueError, IndexError):
+            # ValueError: index_str non è un numero
+            # IndexError: indice fuori range
+            pass
+
+    def accessClosed(self, subject, message, param):
+        try:
+            zoneTopic = self._zones[int(param)-1].topic
+            self.mqttPublish(zoneTopic, "CLOSED")
+        except (ValueError, IndexError):
+            # ValueError: index_str non è un numero
+            # IndexError: indice fuori range
+            pass
+
+    def faultPowerOn(self, subject, message, param):   self.mqttPublish(TOPIC_POWER,       "ON")
+    def faultPowerOff(self, subject, message, param):  self.mqttPublish(TOPIC_POWER,       "OFF")
+    def faultBatteryOn(self, subject, message, param): self.mqttPublish(TOPIC_BATTERY,     "ON")
+    def faultBatteryOff(self, subject, message, param):self.mqttPublish(TOPIC_BATTERY,     "OFF")
+    def faultDeviceOn(self, subject, message, param):  self.mqttPublish(TOPIC_DEVICE,      "ON")
+    def faultDeviceOff(self, subject, message, param): self.mqttPublish(TOPIC_DEVICE,      "OFF")
+    def faultBypassOn(self, subject, message, param):  self.mqttPublish(TOPIC_BYPASS,      "ON")
+    def faultBypassOff(self, subject, message, param): self.mqttPublish(TOPIC_BYPASS,      "OFF")
+    def faultOutputOn(self, subject, message, param):  self.mqttPublish(TOPIC_OUTPUT,      "ON")
+    def faultOutputOff(self, subject, message, param): self.mqttPublish(TOPIC_OUTPUT,      "OFF")
 
     def onlyLastEvent(self, subject, message, param):
         pass  # TOPIC_LAST_EVENT già pubblicato in manageAlarmMessage
