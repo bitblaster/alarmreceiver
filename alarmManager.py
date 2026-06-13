@@ -77,7 +77,6 @@ class AppConfig:
         alarm = data.get('alarm_system', {})
         self.alarm_ip       = alarm['ip']
         self.alarm_port     = int(alarm['port'])
-        self.security_code      = alarm.get('security_code', '')
         self.tz_offset_min      = int(alarm.get('tz_offset_min', 60))
         self.timezone_name      = alarm.get('timezone_name', '')
         self.time_sync_interval = int(alarm.get('time_sync_interval', 3600))
@@ -175,7 +174,6 @@ class AlarmManager:
         self._tcpExecutor       = None
         self._commands          = {}
         self._zones             = []
-        self._securityCodeHex   = ''
         self._tzOffsetMin       = 60
         self._timezoneName      = ''
         self._timeSyncInterval  = 3600
@@ -236,7 +234,6 @@ class AlarmManager:
         self._tcpExecutor      = TcpCommandExecutor(cfg.alarm_ip, cfg.alarm_port)
         self._commands         = cfg.commands
         self._zones            = cfg.zones
-        self._securityCodeHex  = cfg.security_code.encode('ascii').hex()
         self._tzOffsetMin      = cfg.tz_offset_min
         self._timezoneName     = cfg.timezone_name
         self._timeSyncInterval = cfg.time_sync_interval
@@ -421,7 +418,6 @@ class AlarmManager:
         wd  = now.weekday()  # Lun=0, Mar=1, ..., Ven=4, Sab=5, Dom=6 (come SmartLeague)
 
         return [
-            TcpCommand(send=self._securityCodeHex, expect=""),
             # Scrittura offset fuso orario in minuti + timestamp (addr 0x000D) — ~2s risposta
             TcpCommand(send=write12(0x000D, tz, 0x00, 0x04),                   expect="*"),
             # Scrittura mese (addr 0x0165)
@@ -441,9 +437,6 @@ class AlarmManager:
         else:
             now = dt.datetime.now().astimezone().replace(tzinfo=None)
         logging.info(f"Impostazione ora centralina: {now.strftime('%d/%m/%Y %H:%M:%S')}")
-        if not self._securityCodeHex:
-            logging.warning("security_code non configurato in alarm_system — impostazione ora saltata")
-            return
         steps = self._buildSetTimeSteps()
         ok, _ = self._tcpExecutor.run(steps, final_delay=1.0)
         if ok:
@@ -469,14 +462,11 @@ class AlarmManager:
             risposta = timestamp LE32 (secondi dal 01/01/2000 ora locale) + checksum
         """
         import datetime as dt
-        if not self._securityCodeHex:
-            return None
         tz_byte = self._tzOffsetMin & 0xFF
         read_hdr = bytes([0x00, 0x00, 0x00, 0x0D, tz_byte, 0x00, 0x04])
         read_chk = sum(read_hdr) & 0xFF
         read_cmd = (read_hdr + bytes([read_chk])).hex()
         steps = [
-			TcpCommand(send=self._securityCodeHex,    expect=""),
             TcpCommand(send=read_cmd, expect="*"),  # legge timestamp 4-byte LE32
         ]
         ok, resp = self._tcpExecutor.run(steps)
