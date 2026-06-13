@@ -21,7 +21,7 @@ consoleHandler = logging.StreamHandler()
 consoleHandler.setFormatter(logFormatter)
 logging.getLogger().addHandler(consoleHandler)
 
-logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(logging.INFO)
 
 ID_STRING='"SIA-DCS"'
 
