@@ -22,14 +22,8 @@ STATE_ARMED_HOME = "armed_home"
 # ---------------------------------------------------------------------------
 # Topic MQTT pubblicati verso Home Assistant
 # ---------------------------------------------------------------------------
-TOPIC_STARTUP     = "alarm/startup"       # started
 TOPIC_STATE       = "alarm/state"         # armed_away | armed_home | disarmed | triggered
-TOPIC_ACCESS_OPEN = "alarm/access_open"   # ON / OFF
-TOPIC_POWER       = "alarm/power"         # ON / OFF
-TOPIC_BATTERY     = "alarm/fault/battery" # ON / OFF
-TOPIC_DEVICE      = "alarm/fault/device"  # ON / OFF
-TOPIC_OUTPUT      = "alarm/fault/output"  # ON / OFF
-TOPIC_BYPASS      = "alarm/fault/bypass"  # ON / OFF
+TOPIC_NOTIFY      = "alarm/notify"        # subject dell'evento (notifiche informative)
 TOPIC_ATTRIBUTES  = "alarm/attributes"    # OK | elenco zone aperte
 TOPIC_COMMAND     = "alarm/command"       # DISARM | ARM_AWAY | ARM_HOME  (da HA)
 
@@ -201,28 +195,28 @@ class AlarmManager:
             "AR": {"subject": "Ripristino alimentazione",               "execute": self.faultPowerOff},
 
             # Batteria
-            "YM": {"subject": "Corto circuito/disconnessione batteria", "execute": self.faultBatteryOn},
-            "YT": {"subject": "Batteria inefficiente",                  "execute": self.faultBatteryOn},
-            "YR": {"subject": "Ripristino batteria",                    "execute": self.faultBatteryOff},
+            "YM": {"subject": "Corto circuito/disconnessione batteria", "execute": self.notify},
+            "YT": {"subject": "Batteria inefficiente",                  "execute": self.notify},
+            "YR": {"subject": "Ripristino batteria",                    "execute": self.notify},
 
             # Dispositivi
-            "EM": {"subject": "Scomparsa dispositivo",                  "execute": self.faultDeviceOn},
-            "EN": {"subject": "Ripristino scomparsa dispositivo",       "execute": self.faultDeviceOff},
+            "EM": {"subject": "Scomparsa dispositivo",                  "execute": self.notify},
+            "EN": {"subject": "Ripristino scomparsa dispositivo",       "execute": self.notify},
 
             # Esclusioni
-            "BB": {"subject": "Esclusione zona",                        "execute": self.faultBypassOn},
-            "BU": {"subject": "Ripristino esclusione",                  "execute": self.faultBypassOff},
+            "BB": {"subject": "Esclusione zona",                        "execute": self.notify},
+            "BU": {"subject": "Ripristino esclusione",                  "execute": self.notify},
 
             # Uscite
-            "OU": {"subject": "Malfunzionamento uscita",                "execute": self.faultOutputOn},
-            "OV": {"subject": "Ripristino malfunzionamento uscita",     "execute": self.faultOutputOff},
+            "OU": {"subject": "Malfunzionamento uscita",                "execute": self.notify},
+            "OV": {"subject": "Ripristino malfunzionamento uscita",     "execute": self.notify},
 
             # Solo informativi
-            "BC": {"subject": "Reset memoria",                          "execute": self.onlyLastEvent},
-            "JP": {"subject": "Riconoscimento codice/chiave",           "execute": self.onlyLastEvent},
-            "DD": {"subject": "Codice/chiave errati",                   "execute": self.onlyLastEvent},
-            "LB": {"subject": "Ingresso programmazione",                "execute": self.onlyLastEvent},
-            "LX": {"subject": "Uscita programmazione",                  "execute": self.onlyLastEvent},
+            "BC": {"subject": "Reset memoria",                          "execute": self.notify},
+            "JP": {"subject": "Riconoscimento codice/chiave",           "execute": self.notify},
+            "DD": {"subject": "Codice/chiave errati",                   "execute": self.notify},
+            "LB": {"subject": "Ingresso programmazione",                "execute": self.notify},
+            "LX": {"subject": "Uscita programmazione",                  "execute": self.notify},
         }
 
     # -----------------------------------------------------------------------
@@ -250,7 +244,7 @@ class AlarmManager:
         logging.info(f"Connessione MQTT a {cfg.mqtt_broker}:{cfg.mqtt_port}")
         self._mqttClient.connect(cfg.mqtt_broker, cfg.mqtt_port, keepalive=60)
 
-        self.mqttPublish(TOPIC_STARTUP, "started")
+        self.notify("AlarmManager STARTED", None, None)
         # loop_start() avvia il thread di rete in background;
         # il chiamante (es. il server SIA-IP) gestirà il proprio loop principale.
         self._mqttClient.loop_start()
@@ -622,17 +616,9 @@ class AlarmManager:
 
     def faultPowerOn(self, subject, message, param):   self.mqttPublish(TOPIC_POWER,       "OFF")
     def faultPowerOff(self, subject, message, param):  self.mqttPublish(TOPIC_POWER,       "ON")
-    def faultBatteryOn(self, subject, message, param): self.mqttPublish(TOPIC_BATTERY,     "ON")
-    def faultBatteryOff(self, subject, message, param):self.mqttPublish(TOPIC_BATTERY,     "OFF")
-    def faultDeviceOn(self, subject, message, param):  self.mqttPublish(TOPIC_DEVICE,      "ON")
-    def faultDeviceOff(self, subject, message, param): self.mqttPublish(TOPIC_DEVICE,      "OFF")
-    def faultBypassOn(self, subject, message, param):  self.mqttPublish(TOPIC_BYPASS,      "ON")
-    def faultBypassOff(self, subject, message, param): self.mqttPublish(TOPIC_BYPASS,      "OFF")
-    def faultOutputOn(self, subject, message, param):  self.mqttPublish(TOPIC_OUTPUT,      "ON")
-    def faultOutputOff(self, subject, message, param): self.mqttPublish(TOPIC_OUTPUT,      "OFF")
 
-    def onlyLastEvent(self, subject, message, param):
-        pass  # TOPIC_LAST_EVENT già pubblicato in manageAlarmMessage
+    def notify(self, subject, message, param):
+        self.mqttPublish(TOPIC_NOTIFY, subject)
 
     # -----------------------------------------------------------------------
     # MQTT publish (usa il client persistente)
