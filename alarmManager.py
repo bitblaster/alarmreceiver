@@ -23,6 +23,7 @@ STATE_ARMED_HOME = "armed_home"
 # Topic MQTT pubblicati verso Home Assistant
 # ---------------------------------------------------------------------------
 TOPIC_STATE       = "alarm/state"         # armed_away | armed_home | disarmed | triggered
+TOPIC_POWER       = "alarm/power"         # ON / OFF
 TOPIC_NOTIFY      = "alarm/notify"        # subject dell'evento (notifiche informative)
 TOPIC_ATTRIBUTES  = "alarm/attributes"    # OK | elenco zone aperte
 TOPIC_COMMAND     = "alarm/command"       # DISARM | ARM_AWAY | ARM_HOME  (da HA)
@@ -554,8 +555,6 @@ class AlarmManager:
         subject       = reaction["subject"]
         message       = subject + (f": {desc}" if desc else "")
         executeMethod = reaction["execute"]
-
-        #self.mqttPublish(TOPIC_LAST_EVENT, message)
 
         if executeMethod:
             try:
