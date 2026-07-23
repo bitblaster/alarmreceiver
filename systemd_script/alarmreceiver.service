@@ -1,13 +1,17 @@
 [Unit]
 Description=Alarm SiaIP Receiver Service
-After=multi-user.target
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=idle
 WorkingDirectory=/opt/alarmReceiver
 ExecStart=/usr/bin/python3 /opt/alarmReceiver/alarmReceiver.py
 #ExecStopPost=/opt/adb kill-server
-Restart=on-abort
+Restart=on-failure
+RestartSec=15
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
