@@ -6,6 +6,11 @@ Il progetto fa due cose:
 1. **Riceve** gli eventi che la centrale invia in push tramite il protocollo **SIA-IP** (ASCII) e li ripubblica su MQTT.
 2. **Comanda** la centrale (inserimento, disinserimento, stato, verifica zone, sincronizzazione oraria) tramite il **protocollo binario proprietario INIM** su TCP, ricostruito in reverse engineering con `sniffer.py`.
 
+## Architettura
+![Architettura alarmReceiver](docs/architecture.png)
+
+Sorgente modificabile: [`docs/architecture.svg`](docs/architecture.svg).
+
 ## Struttura progetto
 - `alarmReceiver.py` — entry point: server TCP SIA-IP che riceve gli eventi dalla centrale. Avvia l'`AlarmManager`.
 - `alarmManager.py` — cuore del progetto: client MQTT, esecutore comandi TCP binari, parsing SIA-IP, sincronizzazione oraria.

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1330" height="900" viewBox="0 0 1330 900" font-family="'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M2,1 L10,6 L2,11" fill="none" stroke="#8a8780" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1330" height="900" fill="#fdfcfa"/>
+
+  <!-- Linux server -->
+  <rect x="373" y="33" width="920" height="772" rx="40" fill="#f2efe9" stroke="#8a8780" stroke-width="1.2"/>
+  <text x="833" y="88" text-anchor="middle" font-size="26" fill="#444">Linux server (e.g. Raspberry Pi)</text>
+
+  <!-- alarmreceiver.service -->
+  <rect x="413" y="113" width="380" height="520" rx="32" fill="#eeecfc" stroke="#6a5fd0" stroke-width="1.2"/>
+  <text x="603" y="172" text-anchor="middle" font-size="26" font-weight="700" fill="#3a3290">alarmreceiver.service</text>
+  <text x="603" y="212" text-anchor="middle" font-size="22" fill="#5a50c0">systemd, Python 3</text>
+
+  <rect x="443" y="253" width="320" height="112" rx="14" fill="#fbfaf8" stroke="#dddad3" stroke-width="1.2"/>
+  <text x="603" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#1a1a1a">SIA-IP receiver</text>
+  <text x="603" y="340" text-anchor="middle" font-size="22" fill="#555">alarmReceiver.py</text>
+
+  <rect x="443" y="473" width="320" height="112" rx="14" fill="#fbfaf8" stroke="#dddad3" stroke-width="1.2"/>
+  <text x="603" y="520" text-anchor="middle" font-size="26" font-weight="700" fill="#1a1a1a">AlarmManager</text>
+  <text x="603" y="560" text-anchor="middle" font-size="22" fill="#555">alarmManager.py</text>
+
+  <line x1="603" y1="370" x2="603" y2="465" stroke="#8a8780" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="623" y="425" font-size="22" fill="#555">Event</text>
+
+  <!-- INIM panel -->
+  <rect x="33" y="253" width="200" height="332" rx="16" fill="#faebd9" stroke="#a87a3a" stroke-width="1.2"/>
+  <text x="133" y="410" text-anchor="middle" font-size="26" font-weight="700" fill="#6b3d0a">INIM panel</text>
+  <text x="133" y="450" text-anchor="middle" font-size="22" fill="#8a5a1a">SmartLAN</text>
+
+  <line x1="237" y1="309" x2="437" y2="309" stroke="#8a8780" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="303" y="285" text-anchor="middle" font-size="22" fill="#555">SIA events</text>
+
+  <line x1="439" y1="529" x2="241" y2="529" stroke="#8a8780" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="303" y="505" text-anchor="middle" font-size="22" fill="#555">Commands</text>
+
+  <!-- Home Assistant -->
+  <rect x="933" y="253" width="320" height="112" rx="14" fill="#e3f4ee" stroke="#2f8a6a" stroke-width="1.2"/>
+  <text x="1093" y="300" text-anchor="middle" font-size="26" font-weight="700" fill="#11553d">Home Assistant</text>
+  <text x="1093" y="340" text-anchor="middle" font-size="22" fill="#2a7a5a">Service or Docker</text>
+
+  <!-- mosquitto -->
+  <rect x="933" y="473" width="320" height="112" rx="14" fill="#e3f4ee" stroke="#2f8a6a" stroke-width="1.2"/>
+  <text x="1093" y="520" text-anchor="middle" font-size="26" font-weight="700" fill="#11553d">mosquitto.service</text>
+  <text x="1093" y="560" text-anchor="middle" font-size="22" fill="#2a7a5a">MQTT broker</text>
+
+  <line x1="1093" y1="373" x2="1093" y2="465" stroke="#8a8780" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="1113" y="425" font-size="22" fill="#555">MQTT</text>
+
+  <line x1="769" y1="529" x2="927" y2="529" stroke="#8a8780" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="863" y="505" text-anchor="middle" font-size="22" fill="#555">MQTT</text>
+
+  <!-- Configuration -->
+  <rect x="933" y="653" width="320" height="112" rx="14" fill="#fbfaf8" stroke="#dddad3" stroke-width="1.2"/>
+  <text x="1093" y="710" text-anchor="middle" font-size="26" font-weight="700" fill="#1a1a1a">Configuration</text>
+  <text x="1093" y="750" text-anchor="middle" font-size="22" fill="#555">/etc/alarmReceiver.yaml</text>
+
+  <polyline points="929,709 863,709 863,608 799,608" fill="none" stroke="#8a8780" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+  <text x="875" y="663" font-size="22" fill="#555">Reads</text>
+
+  <!-- Ports -->
+  <text x="665" y="860" text-anchor="middle" font-size="22" fill="#555">Ports: SIA-IP 9505 · SmartLAN 5004 · MQTT 1883</text>
+</svg>
